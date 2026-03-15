@@ -1,4 +1,4 @@
-# CC Star
+# CC Start
 
 在不同窗口中使用不同 AI 模型的 Claude Code 启动器。
 
