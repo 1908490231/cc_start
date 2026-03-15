@@ -89,7 +89,7 @@ MODEL_DESCS["mymodel"]="My Model Name"
 
 如果这个项目对你有帮助，请给个 ⭐ Star！
 
-[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/cc-star&type=Date)](https://star-history.com/#yourusername/cc-star&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=wandanan/cc_start&type=Date)](https://star-history.com/#wandanan/cc_start&Date)
 
 ## License
 
