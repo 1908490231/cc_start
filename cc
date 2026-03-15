@@ -185,13 +185,13 @@ reset_models() {
 
     # 删除所有 json 配置文件
     local count=0
-    # 使用 find 更安全地遍历文件
-    while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        echo "删除: $f"
-        rm "$f"
-        ((count++))
-    done < <(find "$CONFIG_DIR" -maxdepth 1 -name "*.json" -type f 2>/dev/null)
+    for f in "$CONFIG_DIR"/*.json; do
+        if [[ -f "$f" ]]; then
+            echo "删除: $f"
+            rm "$f"
+            ((count++))
+        fi
+    done
 
     echo ""
     echo -e "${GREEN}✅ 已删除 $count 个模型配置文件${NC}"
