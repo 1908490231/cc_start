@@ -2,9 +2,32 @@
 
 在不同窗口中使用不同 AI 模型的 Claude Code 启动器。
 
+## 🚀 一分钟安装
+
+```bash
+# 克隆项目
+git clone https://github.com/wandanan/cc_start.git
+cd cc_start
+
+# Windows: 双击运行
+install.bat
+
+# Mac/Linux: 一行命令
+chmod +x install.sh && ./install.sh
+```
+
+安装脚本会自动完成：
+- ✅ 检测/创建安装目录
+- ✅ 复制脚本到 PATH
+- ✅ 创建配置目录
+- ✅ 复制模型配置文件
+- ✅ 自动添加 PATH（Windows）
+
+安装完成后，输入 `cc` 即可使用。
+
 ## 一句话说明
 
-安装后，输入 `cc` 选择模型，或 `cc kimi` / `cc qwen` 直接启动对应模型。
+一个命令切换不同 AI 模型，各窗口独立运行。
 
 ```bash
 $ cc
@@ -32,95 +55,68 @@ $ cc
 | `cc mini` | MiniMax M2.5 |
 | `cc <任意>` | **其他任意模型** |
 
-> 💡 **想添加自己的模型？** 看下面的「快速开始」第 2 步，支持任意兼容 Claude API 的模型。
+> 💡 **想添加自己的模型？** 往下看，支持任意兼容 Claude API 的模型。
 
-## 快速开始
+## 配置 API Key
 
-### 方式一：自动安装（推荐）
+安装后需要配置你的 API Key 才能使用。
 
-**Windows:**
-```cmd
-# 克隆项目后，在项目目录运行
-install.bat
+**方式一：命令行添加（推荐新手）**
+
+```bash
+cc add
+# 按提示输入：别名、名称、API Key、Base URL
 ```
 
-**Mac/Linux:**
+**方式二：复制修改（适合批量）**
+
 ```bash
-# 克隆项目后，在项目目录运行
-chmod +x install.sh
-./install.sh
+cp ~/.claude/models/kimi.json ~/.claude/models/myai.json
+# 编辑文件，修改 API Key
+```
+
+然后输入 `cc myai` 即可启动。
+
+## 使用示例
+
+```bash
+cc              # 交互式选择模型
+cc kimi         # 直接启动 Kimi
+cc myai         # 启动自定义模型
+```
+
+## 手动安装（备选）
+
+如果不想用自动安装脚本：
+
+```bash
+# 1. 复制脚本到 PATH
+mkdir -p ~/.local/bin
+cp cc ~/.local/bin/          # Mac/Linux
+cp cc cc.cmd ~/.local/bin/   # Windows
+
+# 2. 确保 ~/.local/bin 在 PATH 中
+
+# 3. 复制模型配置
+mkdir -p ~/.claude/models
+cp models/*.json ~/.claude/models/
 ```
 
 ## 配置说明
 
-`~/.claude/models/kimi.json` 示例：
+配置文件格式（`~/.claude/models/任意名称.json`）：
 
 ```json
 {
   "env": {
     "ANTHROPIC_AUTH_TOKEN": "your-api-key",
-    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
-    "ANTHROPIC_MODEL": "kimi-k2.5"
+    "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+    "ANTHROPIC_MODEL": "model-name"
   }
 }
 ```
 
-项目 `models/` 目录包含 4 个示例配置文件，按需复制修改即可。
-
-## 快速开始
-
-### 第一步：安装
-
-**自动安装（推荐）**
-```bash
-# Windows: 双击运行 install.bat
-# Mac/Linux: chmod +x install.sh && ./install.sh
-```
-
-**手动安装**
-把 `cc`（和 `cc.cmd`）复制到 PATH 目录（如 `~/.local/bin/`），然后：
-```bash
-mkdir -p ~/.claude/models
-cp models/*.json ~/.claude/models/
-```
-
-### 第二步：配置 API Key
-
-**方法 A：命令行快速添加（适合新模型）**
-
-```bash
-cc add
-```
-
-然后按提示填写：
-```
-模型别名: deepseek          # 启动命令用：cc deepseek
-模型显示名称: DeepSeek V3   # 菜单里显示的名字
-API Key: sk-xxxxxxxx
-Base URL: https://api.deepseek.com/v1
-模型 ID: deepseek-chat      # 可选，直接回车用别名
-```
-
-✅ 完成！配置文件自动创建，立即可用。
-
-**方法 B：复制现有配置（适合改参）**
-
-```bash
-# 1. 复制一份现有配置
-cp ~/.claude/models/kimi.json ~/.claude/models/myai.json
-
-# 2. 用编辑器修改 API Key
-notepad ~/.claude/models/myai.json    # Windows
-# 或
-code ~/.claude/models/myai.json       # VS Code
-```
-
-### 第三步：启动使用
-
-```bash
-cc              # 交互式选择
-cc deepseek     # 直接启动指定模型
-```
+项目 `models/` 目录包含 4 个预置配置文件，作为参考模板。
 
 ## 工作原理
 
