@@ -92,7 +92,7 @@ add_model() {
     echo "  • Claude Code 界面显示使用的模型名: 如 kimi-k2.5"
     echo ""
 
-    read -p "启动命令名称 (如 kimi, 输入 cc kimi 启动): " alias
+    read -p "启动命令名称 (如 kimi，则使用 cc kimi 启动): " alias
     if [[ -z "$alias" ]]; then
         echo "别名不能为空"
         return 1
