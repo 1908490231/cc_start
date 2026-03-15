@@ -121,10 +121,8 @@ add_model() {
         return 1
     fi
 
-    read -p "API 模型 ID (如 gpt-4, 直接回车用: $alias): " model_id
-    [[ -z "$model_id" ]] && model_id="$alias"
-
     # 创建配置文件
+    local model_id="$alias"
     cat > "$CONFIG_DIR/${alias}.json" << EOF
 {
   "env": {
