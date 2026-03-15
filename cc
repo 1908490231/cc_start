@@ -149,7 +149,11 @@ launch_claude() {
     local model="$1"
     shift
 
-    if ! prepare_config "$model"; then
+    local model_config="$CONFIG_DIR/${model}.json"
+
+    if [[ ! -f "$model_config" ]]; then
+        echo ""
+        echo -e "${YELLOW}⚠️  配置文件不存在: $model_config${NC}"
         exit 1
     fi
 
@@ -157,8 +161,8 @@ launch_claude() {
     echo -e "${GREEN}🚀 启动 Claude Code [${MODEL_DESCS[$model]}]...${NC}"
     echo ""
 
-    # 启动 claude
-    "$CLAUDE_BIN" "$@"
+    # 使用 --settings 参数直接指定配置文件，避免多窗口冲突
+    "$CLAUDE_BIN" --settings "$model_config" "$@"
 }
 
 # 重置所有配置

@@ -4,7 +4,7 @@
 
 ## 一句话说明
 
-一个命令切换不同 AI 模型，各窗口独立运行。
+一个命令切换不同 AI 模型，各窗口独立运行，互不影响。
 
 ## 🚀 一分钟安装
 
@@ -82,8 +82,24 @@ cp ~/.claude/models/kimi.json ~/.claude/models/myai.json
 ```bash
 cc              # 交互式选择模型
 cc kimi         # 直接启动 Kimi
+cc qwen         # 在另一个窗口启动 Qwen
 cc myai         # 启动自定义模型
 ```
+
+**多窗口同时使用**：
+
+```bash
+# 终端 1
+cc kimi
+
+# 终端 2（同时运行）
+cc qwen
+
+# 终端 3（同时运行）
+cc glm
+```
+
+每个窗口独立使用不同模型，配置互不干扰。
 
 ## 手动安装（备选）
 
@@ -130,7 +146,16 @@ cp models/*.json ~/.claude/models/
 
 ## 工作原理
 
-通过替换 `~/.claude/settings.json` 来切换模型。首次使用会备份原配置到 `settings.json.backup`。
+通过 `--settings` 参数为每个 Claude Code 实例指定独立的配置文件：
+
+```bash
+claude --settings ~/.claude/models/kimi.json
+claude --settings ~/.claude/models/qwen.json
+```
+
+每个窗口使用自己的配置，**多窗口同时运行互不干扰**。
+
+> 旧版本使用替换 `settings.json` 的方式，已改为 `--settings` 参数方案。
 
 ## 依赖
 
