@@ -30,6 +30,7 @@ copy /Y "%~dp0cc" "%INSTALL_DIR%\cc" >nul
 copy /Y "%~dp0cc.cmd" "%INSTALL_DIR%\cc.cmd" >nul
 
 echo ✅ 脚本已安装
+echo.
 
 :: 创建配置目录
 if not exist "%USERPROFILE%\.claude\models" mkdir "%USERPROFILE%\.claude\models"
@@ -63,6 +64,8 @@ if errorlevel 1 (
     echo ✅ PATH 已更新
     echo.
     echo ⚠️  请重新打开终端以使用 cc 命令
+    echo.
+    pause
 ) else (
     echo ✅ PATH 检查通过
 )
@@ -77,4 +80,5 @@ echo   cc add          - 添加新模型配置
 echo.
 echo 请编辑 %%USERPROFILE%%\.claude\models\ 下的配置文件，填入你的 API Key
 echo.
-pause
+echo 按任意键退出...
+pause >nul
