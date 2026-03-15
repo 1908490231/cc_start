@@ -168,7 +168,8 @@ reset_models() {
     echo -e "${BLUE}║     重置所有模型配置               ║${NC}"
     echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
     echo ""
-    echo "这将删除所有模型配置文件: $CONFIG_DIR/*.json"
+    echo "配置目录: $CONFIG_DIR"
+    echo "即将删除: $CONFIG_DIR/*.json"
     echo ""
     read -p "确定要重置吗? (yes/no): " confirm
     if [[ "$confirm" != "yes" ]]; then
@@ -178,11 +179,13 @@ reset_models() {
 
     # 删除所有 json 配置文件
     local count=0
-    for f in "$CONFIG_DIR"/*.json; do
+    # 使用 find 更安全地遍历文件
+    while IFS= read -r f; do
         [[ -f "$f" ]] || continue
+        echo "删除: $f"
         rm "$f"
         ((count++))
-    done
+    done < <(find "$CONFIG_DIR" -maxdepth 1 -name "*.json" -type f 2>/dev/null)
 
     echo ""
     echo -e "${GREEN}✅ 已删除 $count 个模型配置文件${NC}"
