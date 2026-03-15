@@ -27,7 +27,12 @@ chmod +x install.sh && ./install.sh
 - ✅ 复制模型配置文件
 - ✅ 自动添加 PATH（Windows）
 
-安装完成后，输入 `cc` 即可使用。
+> ⚠️ **安装后如果提示 `cc` 命令找不到？**
+>
+> Windows 安装程序会尝试自动添加 PATH，但如果失效，请手动添加：
+> `系统属性 → 环境变量 → 编辑用户 PATH → 新建 → 添加 %USERPROFILE%\.local\bin`
+
+安装完成后，**先添加模型配置**，然后输入 `cc` 即可使用：
 
 ```bash
 $ cc
@@ -55,20 +60,27 @@ $ cc
 | `cc mini` | MiniMax M2.5 |
 | `cc <任意>` | **其他任意模型** |
 
-> 💡 **想添加自己的模型？** 往下看，支持任意兼容 Claude API 的模型。
+> 💡 **想添加自己的模型？** 使用 `cc add` 命令，支持任意兼容 Claude API 的模型。
 
-## 配置 API Key
+## 🔧 配置 API Key（必做）
 
-安装后需要配置你的 API Key 才能使用。
+安装后需要添加模型配置才能使用。
 
-**方式一：命令行添加（推荐新手）**
+### 推荐方式：命令行添加
 
 ```bash
 cc add
-# 按提示输入：别名、名称、API Key、Base URL
 ```
 
-**方式二：复制修改（适合批量）**
+按提示输入：
+- **启动命令名称**：如 `kimi`（之后用 `cc kimi` 启动）
+- **模型 ID**：如 `kimi-k2.5`
+- **API Key**：你的 API 密钥
+- **Base URL**：API 地址，如 `https://api.kimi.com/coding/`
+
+重复 `cc add` 可添加多个模型。
+
+### 备选方式：复制修改
 
 ```bash
 cp ~/.claude/models/kimi.json ~/.claude/models/myai.json
