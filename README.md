@@ -24,14 +24,15 @@ $ cc
 
 ## 支持的模型
 
-| 命令 | 模型 | 提供商 |
-|------|------|--------|
-| `cc kimi` | Kimi K2.5 | Moonshot |
-| `cc qwen` | 千问 3.5 Plus | 阿里云 |
-| `cc glm` | GLM 5 | 智谱AI |
-| `cc mini` | MiniMax M2.5 | MiniMax |
+| 命令 | 模型 |
+|------|------|
+| `cc kimi` | Kimi K2.5 |
+| `cc qwen` | 千问 3.5 Plus |
+| `cc glm` | GLM 5 |
+| `cc mini` | MiniMax M2.5 |
+| `cc <任意>` | **其他任意模型** |
 
-> 💡 **想添加自己的模型？** 看下面的「快速开始」第 2 步，两种方法任选。
+> 💡 **想添加自己的模型？** 看下面的「快速开始」第 2 步，支持任意兼容 Claude API 的模型。
 
 ## 快速开始
 
