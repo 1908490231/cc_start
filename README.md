@@ -31,7 +31,9 @@ $ cc
 | `cc glm` | GLM 5 | 智谱AI |
 | `cc mini` | MiniMax M2.5 | MiniMax |
 
-## 安装（2 分钟搞定）
+> 💡 **想添加自己的模型？** 看下面的「快速开始」第 2 步，两种方法任选。
+
+## 快速开始
 
 ### 方式一：自动安装（推荐）
 
@@ -48,20 +50,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-### 方式二：手动安装
-
-把 `cc` 和 `cc.cmd` 复制到任意 PATH 目录：
-- Windows: `C:\Users\<用户名>\.local\bin\`（推荐自建此目录）
-- Mac/Linux: `~/.local/bin/` 或 `/usr/local/bin/`
-
-然后创建配置目录并复制模型配置：
-```bash
-mkdir -p ~/.claude/models
-cp models/*.json ~/.claude/models/
-# 编辑配置文件，填入你的 API Key
-```
-
-## 配置格式
+## 配置说明
 
 `~/.claude/models/kimi.json` 示例：
 
@@ -77,33 +66,60 @@ cp models/*.json ~/.claude/models/
 
 项目 `models/` 目录包含 4 个示例配置文件，按需复制修改即可。
 
-## 添加新模型
+## 快速开始
 
-### 方式一：交互式添加（推荐）
+### 第一步：安装
+
+**自动安装（推荐）**
+```bash
+# Windows: 双击运行 install.bat
+# Mac/Linux: chmod +x install.sh && ./install.sh
+```
+
+**手动安装**
+把 `cc`（和 `cc.cmd`）复制到 PATH 目录（如 `~/.local/bin/`），然后：
+```bash
+mkdir -p ~/.claude/models
+cp models/*.json ~/.claude/models/
+```
+
+### 第二步：配置 API Key
+
+**方法 A：命令行快速添加（适合新模型）**
 
 ```bash
 cc add
 ```
 
-按提示输入：
-- 模型别名（如 `deepseek`，用于命令）
-- 模型显示名称（如 `DeepSeek V3`）
-- API Key
-- Base URL
-- 模型 ID（可选，默认使用别名）
-
-自动创建配置文件，立即可用。
-
-### 方式二：复制现有配置
-
-看到 `models/` 下的配置文件，复制一份改个名：
-
-```bash
-cp ~/.claude/models/kimi.json ~/.claude/models/myai.json
-# 编辑 myai.json，修改 API Key 和模型参数
+然后按提示填写：
+```
+模型别名: deepseek          # 启动命令用：cc deepseek
+模型显示名称: DeepSeek V3   # 菜单里显示的名字
+API Key: sk-xxxxxxxx
+Base URL: https://api.deepseek.com/v1
+模型 ID: deepseek-chat      # 可选，直接回车用别名
 ```
 
-下次运行 `cc` 时，会自动检测到新模型。
+✅ 完成！配置文件自动创建，立即可用。
+
+**方法 B：复制现有配置（适合改参）**
+
+```bash
+# 1. 复制一份现有配置
+cp ~/.claude/models/kimi.json ~/.claude/models/myai.json
+
+# 2. 用编辑器修改 API Key
+notepad ~/.claude/models/myai.json    # Windows
+# 或
+code ~/.claude/models/myai.json       # VS Code
+```
+
+### 第三步：启动使用
+
+```bash
+cc              # 交互式选择
+cc deepseek     # 直接启动指定模型
+```
 
 ## 工作原理
 
