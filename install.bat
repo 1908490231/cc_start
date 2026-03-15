@@ -1,84 +1,78 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-:: 先显示标题，确保用户看到窗口打开了
+chcp 936 >nul
+
 echo.
 echo ===================================
-echo    CC Start 安装程序
+echo    CC Start Installer
 echo ===================================
 echo.
 
-:: 检查是否有 cc 文件在当前目录
 if not exist "%~dp0cc" (
-    echo [错误] 未找到 cc 脚本文件
-    echo 请确保 install.bat 和 cc 文件在同一目录
+    echo [ERROR] cc script not found
+    echo Please ensure install.bat and cc are in the same folder
     pause
     exit /b 1
 )
 
-:: 设置安装目录
 set "INSTALL_DIR=%USERPROFILE%\.local\bin"
 
-echo 安装目录: %INSTALL_DIR%
+echo Install dir: %INSTALL_DIR%
 if not exist "%INSTALL_DIR%" (
     mkdir "%INSTALL_DIR%" 2>nul
     if errorlevel 1 (
-        echo [错误] 无法创建安装目录
+        echo [ERROR] Cannot create install directory
         pause
         exit /b 1
     )
 )
 
-:: 检查是否已安装
 if exist "%INSTALL_DIR%\cc.cmd" (
     echo.
-    echo [提示] CC Start 已安装
-    set /p confirm="是否覆盖? (y/N): "
+    echo [INFO] CC Start already installed
+    set /p confirm="Overwrite? (y/N): "
     if /i not "!confirm!=="y" (
-        echo 取消安装
+        echo Cancelled
         pause
         exit /b 0
     )
 )
 
-:: 复制脚本
 echo.
-echo 正在复制文件...
+echo Copying files...
 copy /Y "%~dp0cc" "%INSTALL_DIR%\cc" >nul
 if errorlevel 1 (
-    echo [错误] 复制 cc 失败
+    echo [ERROR] Copy cc failed
     pause
     exit /b 1
 )
 copy /Y "%~dp0cc.cmd" "%INSTALL_DIR%\cc.cmd" >nul
 if errorlevel 1 (
-    echo [错误] 复制 cc.cmd 失败
+    echo [ERROR] Copy cc.cmd failed
     pause
     exit /b 1
 )
-echo [OK] 脚本已安装
+echo [OK] Scripts installed
 
-:: 创建配置目录
 if not exist "%USERPROFILE%\.claude\models" (
     mkdir "%USERPROFILE%\.claude\models" 2>nul
 )
-echo [OK] 配置目录已创建
+echo [OK] Config dir created
 
-:: 复制模型配置
 echo.
-echo 正在复制模型配置...
+echo Copying model configs...
 if exist "%~dp0models" (
     copy /Y "%~dp0models\*.json" "%USERPROFILE%\.claude\models\" >nul 2>&1
-    if not errorlevel 1 echo [OK] 模型配置已复制
+    if not errorlevel 1 echo [OK] Model configs copied
 )
 
-:: 检查 PATH
 echo.
-echo 检查 PATH...
+echo Checking PATH...
 echo %PATH% | find /i "%INSTALL_DIR%" >nul
 if errorlevel 1 (
     echo.
-    echo [提示] 正在添加到用户 PATH...
+    echo [INFO] Adding to PATH...
 
     for /f "tokens=2*" %%a in ('reg query HKCU\Environment /v Path 2^>nul ^| findstr Path') do set "USER_PATH=%%b"
 
@@ -89,30 +83,29 @@ if errorlevel 1 (
     )
 
     if errorlevel 1 (
-        echo [警告] 添加 PATH 失败，请手动添加: %INSTALL_DIR%
+        echo [WARN] Add PATH failed, please add manually: %INSTALL_DIR%
     ) else (
-        echo [OK] PATH 已更新
+        echo [OK] PATH updated
     )
     echo.
-    echo [重要] 请重新打开终端以使用 cc 命令
+    echo [IMPORTANT] Please restart terminal to use cc command
 ) else (
-    echo [OK] PATH 检查通过
+    echo [OK] PATH ok
 )
 
-:: 完成
 echo.
 echo ===================================
-echo    安装完成!
+echo    Installation Complete!
 echo ===================================
 echo.
-echo 使用方法:
-echo   cc              - 交互式选择模型
-echo   cc ^<模型名^>     - 直接启动指定模型
-echo   cc add          - 添加新模型配置
+echo Usage:
+echo   cc              - Interactive mode
+echo   cc ^<model^>     - Start specific model
+echo   cc add          - Add new model
 echo.
-echo 配置文件位置:
+echo Config location:
 echo   %%USERPROFILE%%\.claude\models\
 echo.
-echo 请编辑上述目录中的 JSON 文件，填入你的 API Key
+echo Please edit JSON files in above folder to add your API keys
 echo.
 pause
