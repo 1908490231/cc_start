@@ -33,21 +33,31 @@ $ cc
 
 ## 安装（2 分钟搞定）
 
-**Step 1: 放入 PATH**
+### 方式一：自动安装（推荐）
+
+**Windows:**
+```cmd
+# 克隆项目后，在项目目录运行
+install.bat
+```
+
+**Mac/Linux:**
+```bash
+# 克隆项目后，在项目目录运行
+chmod +x install.sh
+./install.sh
+```
+
+### 方式二：手动安装
 
 把 `cc` 和 `cc.cmd` 复制到任意 PATH 目录：
 - Windows: `C:\Users\<用户名>\.local\bin\`（推荐自建此目录）
 - Mac/Linux: `~/.local/bin/` 或 `/usr/local/bin/`
 
-**如何添加目录到 PATH（Windows）:**
-右键「此电脑」→ 属性 → 高级系统设置 → 环境变量 → 用户变量 `Path` → 编辑 → 新建 → 粘贴路径 → 确定。
-
-**Step 2: 配置 API Key**
-
+然后创建配置目录：
 ```bash
 mkdir -p ~/.claude/models
 cp models/example-*.json ~/.claude/models/
-# 编辑各 json 文件，填入你的 API Key
 ```
 
 ## 配置格式
