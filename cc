@@ -79,7 +79,7 @@ add_model() {
     echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
     echo ""
 
-    read -p "模型别名 (如 gpt4, 用于命令): " alias
+    read -p "模型别名 (如 deepseek, 用于命令): " alias
     if [[ -z "$alias" ]]; then
         echo "别名不能为空"
         return 1
@@ -92,7 +92,7 @@ add_model() {
         [[ "$confirm" != "y" && "$confirm" != "Y" ]] && return 1
     fi
 
-    read -p "模型显示名称 (如 GPT-4): " name
+    read -p "模型显示名称 (如 DeepSeek V3): " name
     [[ -z "$name" ]] && name="$alias"
 
     read -p "API Key: " api_key
