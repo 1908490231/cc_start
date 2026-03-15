@@ -5,10 +5,18 @@
 
 set -e
 
-CONFIG_DIR="$HOME/.claude/models"
-CLAUDE_BIN="$(which claude 2>/dev/null || echo "$HOME/.local/bin/claude")"
-USER_SETTINGS="$HOME/.claude/settings.json"
-TEMP_SETTINGS="$HOME/.claude/.cc-temp-settings.json"
+# 检测用户主目录（Windows 下 Git Bash 的 $HOME 可能是错的，优先用环境变量）
+if [[ -n "$USERPROFILE" ]]; then
+    # Windows: 转换 Windows 路径为 Unix 路径
+    HOME_DIR="$(cygpath "$USERPROFILE" 2>/dev/null || echo "$HOME")"
+else
+    HOME_DIR="$HOME"
+fi
+
+CONFIG_DIR="$HOME_DIR/.claude/models"
+CLAUDE_BIN="$(which claude 2>/dev/null || echo "$HOME_DIR/.local/bin/claude")"
+USER_SETTINGS="$HOME_DIR/.claude/settings.json"
+TEMP_SETTINGS="$HOME_DIR/.claude/.cc-temp-settings.json"
 
 # 自动扫描模型配置文件
 scan_models() {
@@ -69,7 +77,6 @@ prepare_config() {
 
     # 使用选定模型的配置
     cp "$model_config" "$USER_SETTINGS"
-    echo "已切换配置到: $USER_SETTINGS"
     return 0
 }
 
