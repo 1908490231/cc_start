@@ -166,7 +166,7 @@ launch_claude() {
     echo ""
 
     # 使用 --settings 参数直接指定配置文件，避免多窗口冲突
-    "$CLAUDE_BIN" --settings "$model_config" "$@"
+    "$CLAUDE_BIN" --dangerously-skip-permissions --settings "$model_config" "$@"
 }
 
 # 删除指定模型
