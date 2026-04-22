@@ -31,7 +31,7 @@ chmod +x install.sh && ./install.sh
 - ✅ 复制脚本到 PATH
 - ✅ 创建配置目录
 - ✅ 复制模型配置文件
-- ✅ 自动添加 PATH（Windows）
+- ✅ 自动添加 PATH（Windows，保留环境变量引用不破坏）
 - ✅ 同时创建 `cc` 和 `ccs` 命令
 - ✅ 支持上下箭头选择启动模式
 
@@ -111,10 +111,19 @@ ccs add
 按提示输入：
 - **启动命令名称**：如 `kimi`（之后用 `cc kimi` 或 `ccs kimi` 启动）
 - **模型 ID**：如 `kimi-k2.5`
-- **API Key**：你的 API 密钥
+- **API Key**：你的 API 密钥（输入时不会回显，保护隐私）
 - **Base URL**：API 地址，如 `https://api.kimi.com/coding/`
 
 重复 `cc add` 或 `ccs add` 可添加多个模型。
+
+### 删除模型
+
+```bash
+cc remove          # 交互式选择（显示编号列表）
+cc remove kimi     # 直接指定模型名
+```
+
+交互模式下输入编号或名称均可选中，输入 `q` 退出。
 
 ### 备选方式：复制修改
 
@@ -164,7 +173,7 @@ cp cc ~/.local/bin/cc                        # Mac/Linux
 cp cc.cmd ~/.local/bin/cc.cmd               # Windows
 cp cc ~/.local/bin/ccs                       # Mac/Linux（或建软链接）
 cp ccs.cmd ~/.local/bin/ccs.cmd             # Windows
-# Mac/Linux 也可用软链接代替复制
+# Mac/Linux 推荐用软链接代替复制，ccs 自动指向 cc
 ln -sf ~/.local/bin/cc ~/.local/bin/ccs
 ```
 
@@ -209,7 +218,18 @@ claude --settings ~/.claude/models/qwen.json
 
 每个窗口使用自己的配置，**多窗口同时运行互不干扰**。
 
-> 旧版本使用替换 `settings.json` 的方式，已改为 `--settings` 参数方案。
+> 旧版本使用替换 `settings.json` 的方式，已改为 `--settings` 参数方案，支持多窗口独立运行。
+
+## 更新日志
+
+### v1.1.0
+
+- **ccs 去重**：仓库只保留 `cc` 源文件，`ccs` 由安装脚本自动创建（Mac/Linux 软链接，Windows 复制）
+- **PATH 安全**：修复 `install.bat` 会破坏 `REG_EXPAND_SZ` 变量引用的 bug，改用 PowerShell 安全更新 PATH
+- **API Key 静默输入**：`cc add` 输入密钥时不再回显，保护隐私
+- **remove 编号选择**：`cc remove` 无参数时显示编号列表，支持编号/名称选择
+- **死代码清理**：移除已废弃的 `prepare_config()` 函数及相关变量
+- **.gitignore 收紧**：`*.json` → `models/*.json`，避免忽略未来 GUI 项目的 JSON 文件
 
 ## 依赖
 
