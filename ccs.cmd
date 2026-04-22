@@ -10,4 +10,4 @@ if not exist "%BASH%" (
     exit /b 1
 )
 
-"%BASH%" -lic "\"$(cygpath -u '%~dp0ccs')\" $*" -- %*
+"%BASH%" -lic "\"$(cygpath -u '%~dp0cc')\" $*" -- %*

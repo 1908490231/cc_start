@@ -19,8 +19,6 @@ fi
 
 CONFIG_DIR="$HOME_DIR/.claude/models"
 CLAUDE_BIN="$(which claude 2>/dev/null || echo "$HOME_DIR/.local/bin/claude")"
-USER_SETTINGS="$HOME_DIR/.claude/settings.json"
-TEMP_SETTINGS="$HOME_DIR/.claude/.cc-temp-settings.json"
 
 # 全局关联数组（需要 bash 4.0+，macOS 用户请通过 homebrew 安装：brew install bash）
 declare -A MODELS
@@ -64,27 +62,6 @@ show_menu() {
     echo ""
 }
 
-# 准备配置文件
-prepare_config() {
-    local model="$1"
-    local model_config="$CONFIG_DIR/${model}.json"
-
-    if [[ ! -f "$model_config" ]]; then
-        echo ""
-        echo -e "${YELLOW}⚠️  配置文件不存在: $model_config${NC}"
-        return 1
-    fi
-
-    # 备份原始配置（如果不存在备份）
-    if [[ -f "$USER_SETTINGS" && ! -f "$USER_SETTINGS.backup" ]]; then
-        cp "$USER_SETTINGS" "$USER_SETTINGS.backup"
-    fi
-
-    # 使用临时文件，避免多窗口冲突
-    cp "$model_config" "$USER_SETTINGS"
-
-    return 0
-}
 
 # 添加新模型
 add_model() {
@@ -114,7 +91,7 @@ add_model() {
     read -p "Claude Code 使用的模型名ID (如 kimi-k2.5): " name
     [[ -z "$name" ]] && name="$alias"
 
-    read -p "API Key: " api_key
+    read -rs -p "API Key: " api_key; echo
     if [[ -z "$api_key" ]]; then
         echo "API Key 不能为空"
         return 1
@@ -248,15 +225,41 @@ launch_claude() {
 remove_model() {
     local model="$1"
 
+    # 无参数时显示编号列表，交互选择
     if [[ -z "$model" ]]; then
         echo ""
-        echo "用法: ${CMD_NAME} remove <模型名>"
+        echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
+        echo -e "${BLUE}║     删除模型配置                   ║${NC}"
+        echo -e "${BLUE}╚════════════════════════════════════╝${NC}"
         echo ""
-        echo "支持的模型:"
+        local i=1
+        local model_names=()
         for key in "${!MODELS[@]}"; do
-            echo "  $key - ${MODEL_DESCS[$key]}"
+            model_names+=("$key")
+            printf "  ${GREEN}%d)${NC} %-12s - %s\n" "$i" "$key" "${MODEL_DESCS[$key]}"
+            ((i++))
         done
-        return 1
+        echo ""
+        echo -e "  ${YELLOW}q)${NC} 退出"
+        echo ""
+        read -p "请选择要删除的模型 (编号或名称): " choice
+
+        if [[ "$choice" == "q" || "$choice" == "Q" ]]; then
+            echo "取消删除"
+            return 0
+        fi
+
+        # 处理数字选择
+        if [[ "$choice" =~ ^[0-9]+$ ]]; then
+            if [[ "$choice" -ge 1 && "$choice" -le "${#model_names[@]}" ]]; then
+                model="${model_names[$((choice-1))]}"
+            else
+                echo "无效选择"
+                return 1
+            fi
+        else
+            model="$choice"
+        fi
     fi
 
     local model_config="$CONFIG_DIR/${model}.json"

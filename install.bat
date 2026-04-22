@@ -104,18 +104,30 @@ if errorlevel 1 (
     echo.
     echo [INFO] Adding to user PATH...
 
+    :: 使用 PowerShell 读取并更新 PATH，保留 REG_EXPAND_SZ 类型中的变量引用
+    :: 先备份当前 PATH
     for /f "tokens=2*" %%a in ('reg query HKCU\Environment /v Path 2^>nul ^| findstr Path') do set "USER_PATH=%%b"
 
     if defined USER_PATH (
-        setx PATH "!USER_PATH!;!INSTALL_DIR!" >nul 2>&1
+        :: 检查是否已包含安装目录（幂等检查）
+        echo !USER_PATH! | find /i "%INSTALL_DIR%" >nul
+        if errorlevel 1 (
+            powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';%INSTALL_DIR%', 'User')"
+            if errorlevel 1 (
+                echo [WARN] Failed to add PATH, please add manually: %INSTALL_DIR%
+            ) else (
+                echo [OK] PATH updated
+            )
+        ) else (
+            echo [OK] PATH already contains install directory
+        )
     ) else (
-        setx PATH "!INSTALL_DIR!" >nul 2>&1
-    )
-
-    if errorlevel 1 (
-        echo [WARN] Failed to add PATH, please add manually: %INSTALL_DIR%
-    ) else (
-        echo [OK] PATH updated
+        powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('Path', '%INSTALL_DIR%', 'User')"
+        if errorlevel 1 (
+            echo [WARN] Failed to add PATH, please add manually: %INSTALL_DIR%
+        ) else (
+            echo [OK] PATH updated
+        )
     )
     echo.
     echo [IMPORTANT] Please reopen terminal to use cc/ccs commands
