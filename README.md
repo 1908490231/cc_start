@@ -238,6 +238,43 @@ claude --settings ~/.claude/models/qwen.json
   - **macOS**：系统自带 bash 3.2，需通过 Homebrew 安装：`brew install bash`
   - **Linux**：主流发行版（Ubuntu/Debian/Fedora/CentOS 等）自带 bash 4.x/5.x，无需额外安装
 
+## 桌面版（GUI）
+
+CC Start 也提供图形界面版本，无需记忆命令，点点鼠标即可启动。
+
+### 下载安装
+
+点击 [CC Start Desktop v0.1.0 MVP](https://github.com/wandanan/cc_start/releases) 下载 MSI 安装包，双击安装即可。
+
+### 使用截图
+
+> 截图待补充
+
+### 功能说明
+
+- 可视化选择工作目录
+- 可视化选择已配置的模型
+- 普通启动 / 跳过权限确认 切换
+- 一键启动 Claude Code
+
+### CLI 与桌面版共存
+
+命令行版（CLI）和桌面版可以同时安装，互不影响：
+
+- **CLI**：`cc` / `ccs` 命令，终端操作
+- **桌面版**：图形界面，鼠标操作
+- **共享配置**：两者读写同一份 `~/.claude/models/*.json`，在任一端添加的模型在另一端立即可见
+
+### 开发模式运行
+
+如果想参与开发或自行编译：
+
+```cmd
+cd desktop
+npm install
+npm run tauri dev
+```
+
 ## Star History
 
 如果这个项目对你有帮助，请给个 ⭐ Star！
