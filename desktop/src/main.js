@@ -4,6 +4,17 @@ const open = window.__TAURI__.dialog.open;
 // 状态
 let selectedModel = null;
 let models = [];
+let homeDir = '';
+
+// 获取主目录
+async function initHomeDir() {
+  try {
+    homeDir = await invoke('get_home_dir');
+    workDirInput.value = homeDir;
+  } catch (e) {
+    console.error('获取主目录失败:', e);
+  }
+}
 
 // DOM 元素
 const modelGrid = document.getElementById('model-grid');
@@ -68,7 +79,8 @@ browseBtn.addEventListener('click', async () => {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: '选择工作目录'
+      title: '选择工作目录',
+      defaultPath: homeDir || undefined
     });
     if (selected) {
       workDirInput.value = selected;
@@ -83,12 +95,8 @@ browseBtn.addEventListener('click', async () => {
 launchBtn.addEventListener('click', async () => {
   clearErrors();
 
-  // 校验工作目录
-  const workDir = workDirInput.value.trim();
-  if (!workDir) {
-    dirError.textContent = '请选择工作目录';
-    return;
-  }
+  // 校验工作目录（空时默认用主目录）
+  const workDir = workDirInput.value.trim() || homeDir;
 
   // 校验模型
   if (!selectedModel) {
@@ -115,5 +123,6 @@ launchBtn.addEventListener('click', async () => {
 
 // 初始化
 window.addEventListener('DOMContentLoaded', () => {
+  initHomeDir();
   loadModels();
 });

@@ -10,6 +10,13 @@ struct ModelInfo {
     base_url: String,
 }
 
+#[tauri::command]
+fn get_home_dir() -> String {
+    env::var("USERPROFILE")
+        .or_else(|_| env::var("HOME"))
+        .unwrap_or_else(|_| "C:\\".to_string())
+}
+
 fn get_models_dir() -> PathBuf {
     if let Ok(userprofile) = env::var("USERPROFILE") {
         PathBuf::from(userprofile).join(".claude").join("models")
@@ -150,7 +157,7 @@ fn launch_claude(params: LaunchParams) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![list_models, launch_claude])
+        .invoke_handler(tauri::generate_handler![list_models, launch_claude, get_home_dir])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
