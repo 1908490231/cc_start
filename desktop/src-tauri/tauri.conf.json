@@ -11,8 +11,10 @@
     "windows": [
       {
         "title": "CC Start",
-        "width": 480,
-        "height": 620,
+        "width": 800,
+        "height": 600,
+        "minWidth": 700,
+        "minHeight": 500,
         "resizable": true,
         "fullscreen": false
       }

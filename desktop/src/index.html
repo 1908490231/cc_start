@@ -10,53 +10,43 @@
 
   <body>
     <div class="container">
-      <h1 class="title">CC Start</h1>
-
-      <!-- 工作目录 -->
-      <div class="section">
-        <div class="section-label">工作目录</div>
-        <div class="dir-row">
-          <input type="text" id="work-dir" placeholder="选择或输入工作目录" />
-          <button type="button" id="browse-btn">浏览</button>
+      <!-- 顶部标题栏 -->
+      <div class="header">
+        <div class="header-left">
+          <h1 class="title">CC Start</h1>
+          <input type="text" id="search-box" placeholder="搜索配置..." />
         </div>
-        <div class="error-msg" id="dir-error"></div>
-      </div>
-
-      <!-- 启动模式 -->
-      <div class="section">
-        <div class="section-label">启动模式</div>
-        <div class="radio-group">
-          <label class="radio-item">
-            <input type="radio" name="mode" value="normal" checked />
-            <span>普通启动</span>
-          </label>
-          <label class="radio-item">
-            <input type="radio" name="mode" value="skip-permissions" />
-            <span>跳过权限确认</span>
-          </label>
+        <div class="header-right">
+          <button type="button" class="btn-primary" id="add-config-btn">
+            <span class="btn-icon">+</span> 新增配置
+          </button>
         </div>
       </div>
 
-      <!-- 选择模型 -->
-      <div class="section">
-        <div class="section-label">选择模型</div>
-        <div class="error-msg" id="model-error"></div>
-        <div class="model-grid" id="model-grid">
-          <!-- 模型卡片由 JS 动态生成 -->
-        </div>
+      <!-- 配置列表容器 -->
+      <div class="config-list" id="config-list">
+        <!-- 配置行由 JS 动态生成 -->
       </div>
 
-      <!-- 启动按钮 -->
-      <button type="button" id="launch-btn">启动</button>
-
-      <!-- 次级按钮 -->
-      <div class="secondary-btns">
-        <button type="button" class="btn-secondary disabled" id="config-btn" disabled title="即将推出">配置管理</button>
-        <button type="button" class="btn-secondary disabled" id="add-btn" disabled title="即将推出">添加模型</button>
+      <!-- 空状态 -->
+      <div class="empty-state" id="empty-state" style="display: none;">
+        <p>暂无配置</p>
+        <p class="empty-hint">点击"新增配置"添加第一个模型</p>
       </div>
 
       <!-- Toast -->
       <div class="toast" id="toast"></div>
+    </div>
+
+    <!-- 详情页（隐藏，切换视图显示） -->
+    <div class="detail-page" id="detail-page" style="display: none;">
+      <div class="detail-header">
+        <button type="button" class="btn-back" id="back-btn">&lt; 返回</button>
+        <h2 class="detail-title">编辑配置</h2>
+      </div>
+      <div class="detail-form" id="detail-form">
+        <!-- 详情页表单内容 -->
+      </div>
     </div>
   </body>
 </html>

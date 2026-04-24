@@ -12,211 +12,299 @@
   padding: 0;
 }
 
-body {
+html, body {
+  min-width: 700px;
   min-height: 100vh;
   background: linear-gradient(135deg, #fff9f3 0%, #fff3e8 100%);
 }
 
+body {
+  display: flex;
+  justify-content: center;
+}
+
 .container {
-  max-width: 460px;
+  width: 100%;
+  max-width: 900px;
+  min-width: 700px;
   margin: 0 auto;
   padding: 24px 20px 40px;
 }
 
 /* 标题 */
 .title {
-  text-align: center;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   color: #e67e22;
-  margin-bottom: 24px;
   letter-spacing: 2px;
+  margin-bottom: 0;
 }
 
-/* 区块 */
-.section {
-  margin-bottom: 20px;
-}
-
-.section-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #888;
-  margin-bottom: 8px;
-  letter-spacing: 1px;
-}
-
-/* 工作目录行 */
-.dir-row {
+/* 顶部栏 */
+.header {
   display: flex;
-  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 16px;
 }
 
-#work-dir {
-  flex: 1;
-  padding: 10px 14px;
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+#search-box {
+  padding: 8px 14px;
   border: 1.5px solid #e0d5c8;
-  border-radius: 10px;
+  border-radius: 8px;
   font-size: 14px;
   background: #fff;
   color: #333;
   outline: none;
+  width: 220px;
   transition: border-color 0.2s;
 }
 
-#work-dir:focus {
+#search-box:focus {
   border-color: #e67e22;
 }
 
-#browse-btn {
-  padding: 10px 16px;
-  background: #e67e22;
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.2s;
-}
-
-#browse-btn:hover {
-  background: #d35400;
-}
-
-/* 错误提示 */
-.error-msg {
-  color: #e74c3c;
-  font-size: 12px;
-  margin-top: 6px;
-  min-height: 16px;
-}
-
-/* 单选组 */
-.radio-group {
-  display: flex;
-  gap: 16px;
-}
-
-.radio-item {
+/* 主按钮 */
+.btn-primary {
   display: flex;
   align-items: center;
   gap: 6px;
-  cursor: pointer;
+  padding: 10px 18px;
+  background: #e67e22;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
   font-size: 14px;
-  color: #444;
-}
-
-.radio-item input[type="radio"] {
-  accent-color: #e67e22;
-  width: 16px;
-  height: 16px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.2s;
 }
 
-/* 模型网格 */
-.model-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  margin-top: 4px;
+.btn-primary:hover {
+  background: #d35400;
 }
 
-.model-card {
+.btn-icon {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 配置列表 */
+.config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 配置行 */
+.config-row {
   background: #fff;
   border: 1.5px solid #e8ddd4;
-  border-radius: 10px;
-  padding: 14px 12px;
-  cursor: pointer;
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.1s;
-  text-align: center;
+  border-radius: 12px;
+  padding: 16px 20px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
 }
 
-.model-card:hover {
+.config-row:hover {
   border-color: #e67e22;
-  box-shadow: 0 2px 8px rgba(230, 126, 34, 0.15);
+  box-shadow: 0 2px 8px rgba(230, 126, 34, 0.12);
 }
 
-.model-card.selected {
-  border-color: #e67e22;
-  background: #fff3e8;
-  box-shadow: 0 0 0 2px rgba(230, 126, 34, 0.25);
+/* 左侧：名称 + 路径 */
+.config-row-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.model-card:active {
-  transform: scale(0.97);
+/* 左侧：名称信息 */
+.config-info {
+  min-width: 0;
 }
 
-.model-alias {
-  font-size: 15px;
+.config-display-name {
+  font-size: 16px;
   font-weight: 600;
   color: #2c2c2c;
   margin-bottom: 4px;
 }
 
-.model-id {
-  font-size: 11px;
-  color: #999;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-empty {
-  grid-column: 1 / -1;
-  text-align: center;
-  color: #aaa;
+.config-alias {
   font-size: 13px;
-  padding: 24px 0;
+  color: #888;
 }
 
-/* 启动按钮 */
-#launch-btn {
+.config-alias-input {
   width: 100%;
-  padding: 14px;
+  max-width: 280px;
+  padding: 6px 10px;
+  border: 1px solid #e0d5c8;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #333;
+  background: #fafafa;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.config-alias-input:focus {
+  border-color: #e67e22;
+  background: #fff;
+}
+
+/* 路径行 */
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.path-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 6px 10px;
+  border: 1px solid #e0d5c8;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #333;
+  background: #fafafa;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.path-input:focus {
+  border-color: #e67e22;
+  background: #fff;
+}
+
+.browse-btn {
+  padding: 6px 12px;
+  background: #f5f0eb;
+  color: #666;
+  border: 1px solid #e0d5c8;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.browse-btn:hover {
+  background: #efe8e0;
+  border-color: #d5c5b8;
+}
+
+/* 右侧：模式 + 按钮 */
+.config-row-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+/* 启动模式 */
+.config-mode {
+  display: flex;
+  align-items: center;
+}
+
+.mode-select {
+  padding: 6px 10px;
+  border: 1px solid #e0d5c8;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #333;
+  background: #fafafa;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.mode-select:focus {
+  border-color: #e67e22;
+}
+
+/* 操作按钮行 */
+.config-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-launch {
+  padding: 8px 20px;
   background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
   color: #fff;
   border: none;
-  border-radius: 12px;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 3px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  margin-top: 8px;
-  box-shadow: 0 4px 12px rgba(230, 126, 34, 0.3);
+  box-shadow: 0 2px 8px rgba(230, 126, 34, 0.3);
   transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
 }
 
-#launch-btn:hover {
+.btn-launch:hover {
   background: linear-gradient(135deg, #d35400 0%, #c0392b 100%);
-  box-shadow: 0 6px 16px rgba(230, 126, 34, 0.4);
+  box-shadow: 0 4px 12px rgba(230, 126, 34, 0.4);
 }
 
-#launch-btn:active {
-  transform: scale(0.98);
+.btn-launch:active {
+  transform: scale(0.97);
 }
 
-/* 次级按钮 */
-.secondary-btns {
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.btn-secondary {
-  padding: 8px 20px;
+.btn-edit {
+  padding: 8px 16px;
   background: #f5f0eb;
-  color: #bbb;
-  border: 1.5px solid #e0d5c8;
+  color: #666;
+  border: 1px solid #e0d5c8;
   border-radius: 8px;
   font-size: 13px;
-  cursor: not-allowed;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
 }
 
-.btn-secondary.disabled {
-  opacity: 0.6;
+.btn-edit:hover {
+  background: #efe8e0;
+  border-color: #d5c5b8;
+  color: #333;
+}
+
+/* 空状态 */
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #aaa;
+}
+
+.empty-state p {
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.empty-hint {
+  font-size: 13px;
+  color: #bbb;
 }
 
 /* Toast */
@@ -240,4 +328,168 @@ body {
 .toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* 详情页 */
+.detail-page {
+  width: 100%;
+  max-width: 600px;
+  min-width: 600px;
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.btn-back {
+  padding: 8px 16px;
+  background: #f5f0eb;
+  color: #666;
+  border: 1px solid #e0d5c8;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-back:hover {
+  background: #efe8e0;
+}
+
+.detail-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #2c2c2c;
+}
+
+.detail-form {
+  background: #fff;
+  border: 1.5px solid #e8ddd4;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #888;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #e0d5c8;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #333;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-input:focus {
+  border-color: #e67e22;
+}
+
+.form-select {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #e0d5c8;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #333;
+  background: #fff;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.form-select:focus {
+  border-color: #e67e22;
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.form-row .form-input {
+  flex: 1;
+}
+
+.btn-save {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 24px;
+  box-shadow: 0 4px 12px rgba(230, 126, 34, 0.3);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.btn-save:hover {
+  background: linear-gradient(135deg, #d35400 0%, #c0392b 100%);
+  box-shadow: 0 6px 16px rgba(230, 126, 34, 0.4);
+}
+
+/* 详情页原始配置文本框 */
+.config-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 12px;
+  border: 1.5px solid #e0d5c8;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: "Consolas", "Monaco", monospace;
+  color: #333;
+  background: #fafafa;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.config-textarea:focus {
+  border-color: #e67e22;
+  background: #fff;
+}
+
+.config-error {
+  color: #e74c3c;
+  font-size: 12px;
+  margin-top: 6px;
+  min-height: 16px;
+}
+
+/* 同步提示 */
+.sync-status {
+  font-size: 12px;
+  color: #888;
+  margin-top: 8px;
+  text-align: right;
+}
+
+.sync-status.synced {
+  color: #27ae60;
+}
+
+.sync-status.unsynced {
+  color: #e67e22;
 }
