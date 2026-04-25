@@ -33,9 +33,6 @@
         <p>暂无配置</p>
         <p class="empty-hint">点击"新增配置"添加第一个模型</p>
       </div>
-
-      <!-- Toast -->
-      <div class="toast" id="toast"></div>
     </div>
 
     <!-- 详情页（隐藏，切换视图显示） -->
@@ -48,5 +45,8 @@
         <!-- 详情页表单内容 -->
       </div>
     </div>
+
+    <!-- Toast 必须在 .container/.detail-page 之外，避免父级 display:none 时一起被隐藏 -->
+    <div class="toast" id="toast"></div>
   </body>
 </html>

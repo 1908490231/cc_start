@@ -222,10 +222,11 @@ body {
   gap: 12px;
 }
 
-/* 启动模式 */
+/* 启动模式（含左侧删除按钮 + select） */
 .config-mode {
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .mode-select {
@@ -242,6 +243,34 @@ body {
 
 .mode-select:focus {
   border-color: #e67e22;
+}
+
+/* 删除按钮：低显眼，避免误点；悬停变红提示危险 */
+.btn-delete-row {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #999;
+  border: 1px solid #e0d5c8;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.btn-delete-row:hover {
+  color: #c0392b;
+  border-color: #c0392b;
+  background: rgba(192, 57, 43, 0.08);
+}
+
+.btn-delete-row:active {
+  transform: scale(0.95);
 }
 
 /* 操作按钮行 */
@@ -333,10 +362,22 @@ body {
 /* 详情页 */
 .detail-page {
   width: 100%;
-  max-width: 600px;
-  min-width: 600px;
+  max-width: 720px;
+  min-width: 720px;
   margin: 0 auto;
-  padding: 24px 20px 40px;
+  padding: 24px 20px 0;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 48px);
+}
+
+.detail-form {
+  flex: 1;
+  overflow-y: auto;
+  background: #fff;
+  border: 1.5px solid #e8ddd4;
+  border-radius: 12px;
+  padding: 24px;
 }
 
 .detail-header {
@@ -403,6 +444,33 @@ body {
   border-color: #e67e22;
 }
 
+/* 带图标的输入框 */
+.input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-with-icon .form-input {
+  padding-right: 40px;
+}
+
+.btn-toggle-view {
+  position: absolute;
+  right: 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.btn-toggle-view:hover {
+  opacity: 1;
+}
+
 .form-select {
   width: 100%;
   padding: 10px 14px;
@@ -430,6 +498,18 @@ body {
   flex: 1;
 }
 
+.detail-footer {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 720px;
+  padding: 16px 24px;
+  background: linear-gradient(135deg, #fff9f3 0%, #fff3e8 100%);
+  z-index: 99;
+}
+
 .btn-save {
   width: 100%;
   padding: 14px;
@@ -440,7 +520,6 @@ body {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  margin-top: 24px;
   box-shadow: 0 4px 12px rgba(230, 126, 34, 0.3);
   transition: background 0.2s, box-shadow 0.2s;
 }
@@ -450,26 +529,38 @@ body {
   box-shadow: 0 6px 16px rgba(230, 126, 34, 0.4);
 }
 
-/* 详情页原始配置文本框 */
-.config-textarea {
+/* 详情页原始配置（可编辑的 pre） */
+.config-editable {
+  display: block;
   width: 100%;
-  min-height: 200px;
+  min-height: 80px;
   padding: 12px;
   border: 1.5px solid #e0d5c8;
   border-radius: 8px;
   font-size: 13px;
   font-family: "Consolas", "Monaco", monospace;
   color: #333;
-  background: #fafafa;
+  background: #fffaf5;
   outline: none;
-  resize: vertical;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
   transition: border-color 0.2s;
+  overflow: visible;
 }
 
-.config-textarea:focus {
+.config-editable:focus {
   border-color: #e67e22;
   background: #fff;
 }
+
+/* JSON 语法高亮 */
+.json-key { color: #0066cc; }
+.json-string { color: #cc0000; }
+.json-number { color: #009900; }
+.json-boolean { color: #9933cc; }
+.json-null { color: #999999; }
 
 .config-error {
   color: #e74c3c;
