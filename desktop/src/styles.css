@@ -319,6 +319,24 @@ body {
   color: #333;
 }
 
+/* 复制按钮：与 .btn-edit 同款次按钮风格，但底色更淡，避免比"修改"更显眼 */
+.btn-copy {
+  padding: 8px 14px;
+  background: #faf6f1;
+  color: #888;
+  border: 1px solid #e8ddd0;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.btn-copy:hover {
+  background: #f0e8de;
+  border-color: #d5c5b8;
+  color: #555;
+}
+
 /* 空状态 */
 .empty-state {
   text-align: center;
@@ -361,30 +379,35 @@ body {
 
 /* 详情页 */
 .detail-page {
+  box-sizing: border-box;
   width: 100%;
-  max-width: 720px;
-  min-width: 720px;
+  max-width: 900px;
+  min-width: 700px;
   margin: 0 auto;
-  padding: 24px 20px 0;
+  padding: 24px 20px 124px;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 48px);
 }
 
 .detail-form {
-  flex: 1;
-  overflow-y: auto;
   background: #fff;
   border: 1.5px solid #e8ddd4;
   border-radius: 12px;
   padding: 24px;
+  overflow: visible;
 }
 
 .detail-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+  padding: 0 0 12px;
+  background: linear-gradient(135deg, #fff9f3 0%, #fff3e8 100%);
+  border-bottom: 1px solid rgba(224, 213, 200, 0.9);
 }
 
 .btn-back {
@@ -408,12 +431,6 @@ body {
   color: #2c2c2c;
 }
 
-.detail-form {
-  background: #fff;
-  border: 1.5px solid #e8ddd4;
-  border-radius: 12px;
-  padding: 24px;
-}
 
 .form-group {
   margin-bottom: 16px;
@@ -498,20 +515,69 @@ body {
   flex: 1;
 }
 
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
 .detail-footer {
   position: fixed;
   bottom: 0;
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
-  max-width: 720px;
-  padding: 16px 24px;
+  max-width: 900px;
+  padding: 14px 24px 16px;
   background: linear-gradient(135deg, #fff9f3 0%, #fff3e8 100%);
   z-index: 99;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-footer-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-footer-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.btn-test {
+  min-width: 132px;
+  padding: 12px 16px;
+  background: #f5f0eb;
+  color: #666;
+  border: 1px solid #e0d5c8;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.btn-test:hover:not(:disabled) {
+  background: #efe8e0;
+  border-color: #d5c5b8;
+  color: #333;
+}
+
+.btn-test:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .btn-save {
-  width: 100%;
+  flex: 1;
+  width: auto;
   padding: 14px;
   background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
   color: #fff;
@@ -524,43 +590,183 @@ body {
   transition: background 0.2s, box-shadow 0.2s;
 }
 
+.btn-save-compact {
+  flex: 0 0 auto;
+  min-width: 96px;
+  padding: 12px 18px;
+  font-size: 14px;
+}
+
 .btn-save:hover {
   background: linear-gradient(135deg, #d35400 0%, #c0392b 100%);
   box-shadow: 0 6px 16px rgba(230, 126, 34, 0.4);
 }
 
-/* 详情页原始配置（可编辑的 pre） */
-.config-editable {
-  display: block;
-  width: 100%;
-  min-height: 80px;
-  padding: 12px;
-  border: 1.5px solid #e0d5c8;
+.test-result {
+  margin-top: 0;
+  padding: 10px 12px;
   border-radius: 8px;
   font-size: 13px;
-  font-family: "Consolas", "Monaco", monospace;
-  color: #333;
-  background: #fffaf5;
-  outline: none;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-  margin: 0;
-  transition: border-color 0.2s;
-  overflow: visible;
+  flex: 1;
+  min-height: 0;
 }
 
-.config-editable:focus {
+.test-result.success {
+  background: rgba(39, 174, 96, 0.12);
+  color: #1e8449;
+  border: 1px solid rgba(39, 174, 96, 0.25);
+}
+
+.test-result.error {
+  background: rgba(231, 76, 60, 0.1);
+  color: #c0392b;
+  border: 1px solid rgba(231, 76, 60, 0.22);
+}
+
+.test-hint {
+  margin-top: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #8a7f73;
+  white-space: nowrap;
+}
+
+
+
+.config-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.config-header-row .form-label {
+  margin-bottom: 0;
+}
+
+.config-wrap-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #8a7f73;
+  user-select: none;
+}
+
+.config-wrap-toggle input {
+  margin: 0;
+}
+
+.config-editor-shell {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: stretch;
+  border: 1.5px solid #e0d5c8;
+  border-radius: 8px;
+  background: #fffaf5;
+  overflow-x: auto;
+  overflow-y: visible;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.config-editor-shell:focus-within {
   border-color: #e67e22;
   background: #fff;
 }
 
-/* JSON 语法高亮 */
-.json-key { color: #0066cc; }
-.json-string { color: #cc0000; }
-.json-number { color: #009900; }
-.json-boolean { color: #9933cc; }
-.json-null { color: #999999; }
+.config-line-numbers {
+  padding: 12px 8px 12px 12px;
+  border-right: 1px solid #eadfd4;
+  color: #9a8f84;
+  background: #f9f1e9;
+  font-size: 13px;
+  font-family: "Consolas", "Monaco", monospace;
+  line-height: 1.5;
+  text-align: right;
+  white-space: pre;
+  user-select: none;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.config-editor-stack {
+  position: relative;
+  min-width: 0;
+  min-height: 240px;
+}
+
+.config-editor-highlight,
+.config-editor-input {
+  display: block;
+  width: 100%;
+  min-width: 100%;
+  min-height: 240px;
+  padding: 12px;
+  margin: 0;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  font-family: "Consolas", "Monaco", monospace;
+  line-height: 1.5;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  box-sizing: border-box;
+  tab-size: 2;
+}
+
+.config-editor-highlight {
+  position: absolute;
+  inset: 0;
+  color: #333;
+  background: transparent;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.config-editor-input {
+  position: relative;
+  color: transparent;
+  caret-color: #333;
+  background: transparent;
+  resize: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.config-editor-input::selection {
+  background: rgba(230, 126, 34, 0.18);
+}
+
+.config-editor-shell.wrap-enabled {
+  overflow-x: hidden;
+}
+
+.config-editor-shell.wrap-enabled .config-editor-highlight,
+.config-editor-shell.wrap-enabled .config-editor-input {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
+}
+
+.config-editor-highlight .json-key {
+  color: #9b59b6;
+}
+
+.config-editor-highlight .json-string {
+  color: #27ae60;
+}
+
+.config-editor-highlight .json-number {
+  color: #d35400;
+}
+
+.config-editor-highlight .json-keyword {
+  color: #2980b9;
+}
 
 .config-error {
   color: #e74c3c;
@@ -581,6 +787,109 @@ body {
   color: #27ae60;
 }
 
-.sync-status.unsynced {
-  color: #e67e22;
+
+.btn-settings {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #8b8176;
+  border: 1px solid #e0d5c8;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.btn-settings:hover {
+  background: #f5f0eb;
+  border-color: #d5c5b8;
+  color: #5f564d;
+}
+
+.config-row.last-launched {
+  background: linear-gradient(135deg, #fff3e4 0%, #ffedd8 100%);
+  border: 1.5px solid #e9a45d;
+  box-shadow: 0 4px 14px rgba(230, 126, 34, 0.16);
+  padding-left: 16px;
+}
+
+.config-row.last-launched:hover {
+  border-color: #dd8d39;
+  box-shadow: 0 6px 18px rgba(230, 126, 34, 0.2);
+}
+
+.settings-page {
+  width: 100%;
+  max-width: 900px;
+  min-width: 720px;
+  margin: 0 auto;
+  padding: 24px 20px 32px;
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-card {
+  background: #fff;
+  border: 1.5px solid #e8ddd4;
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+
+.settings-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #2c2c2c;
+  margin-bottom: 14px;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #4d443d;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.settings-checkbox:last-child {
+  margin-bottom: 0;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn-danger {
+  padding: 8px 16px;
+  background: rgba(192, 57, 43, 0.08);
+  color: #c0392b;
+  border: 1px solid rgba(192, 57, 43, 0.24);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.btn-danger:hover {
+  background: rgba(192, 57, 43, 0.14);
+  border-color: rgba(192, 57, 43, 0.4);
+}
+
+.settings-about-item {
+  color: #5b5249;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.settings-about-item:last-child {
+  margin-bottom: 0;
 }

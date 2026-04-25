@@ -10,43 +10,43 @@
 
   <body>
     <div class="container">
-      <!-- 顶部标题栏 -->
       <div class="header">
         <div class="header-left">
           <h1 class="title">CC Start</h1>
           <input type="text" id="search-box" placeholder="搜索配置..." />
         </div>
         <div class="header-right">
+          <button type="button" class="btn-settings" id="settings-btn" title="设置">⚙</button>
           <button type="button" class="btn-primary" id="add-config-btn">
             <span class="btn-icon">+</span> 新增配置
           </button>
         </div>
       </div>
 
-      <!-- 配置列表容器 -->
-      <div class="config-list" id="config-list">
-        <!-- 配置行由 JS 动态生成 -->
-      </div>
+      <div class="config-list" id="config-list"></div>
 
-      <!-- 空状态 -->
       <div class="empty-state" id="empty-state" style="display: none;">
         <p>暂无配置</p>
         <p class="empty-hint">点击"新增配置"添加第一个模型</p>
       </div>
     </div>
 
-    <!-- 详情页（隐藏，切换视图显示） -->
     <div class="detail-page" id="detail-page" style="display: none;">
       <div class="detail-header">
         <button type="button" class="btn-back" id="back-btn">&lt; 返回</button>
         <h2 class="detail-title">编辑配置</h2>
       </div>
-      <div class="detail-form" id="detail-form">
-        <!-- 详情页表单内容 -->
-      </div>
+      <div class="detail-form" id="detail-form"></div>
     </div>
 
-    <!-- Toast 必须在 .container/.detail-page 之外，避免父级 display:none 时一起被隐藏 -->
+    <div class="settings-page" id="settings-page" style="display:none;">
+      <div class="detail-header">
+        <button type="button" class="btn-back" id="settings-back-btn">&lt; 返回</button>
+        <h2 class="detail-title">设置</h2>
+      </div>
+      <div class="settings-content" id="settings-content"></div>
+    </div>
+
     <div class="toast" id="toast"></div>
   </body>
 </html>
