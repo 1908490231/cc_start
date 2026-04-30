@@ -61,12 +61,15 @@ struct TestResult {
 struct UserPrefs {
     remember_model: bool,
     last_alias: String,
+    #[serde(default)]
+    pinned_aliases: Vec<String>,
 }
 
 fn default_prefs() -> UserPrefs {
     UserPrefs {
         remember_model: true,
         last_alias: String::new(),
+        pinned_aliases: Vec::new(),
     }
 }
 
@@ -393,8 +396,19 @@ fn save_model_config_in_dir(models_dir: &PathBuf, params: SaveModelParams) -> Re
             fs::remove_file(&old_path).map_err(|e| e.to_string())?;
 
             let mut prefs = read_prefs_file();
+            let mut prefs_changed = false;
             if prefs.last_alias == old_alias {
                 prefs.last_alias = alias.to_string();
+                prefs_changed = true;
+            }
+            // 重命名时同步置顶列表里的旧别名
+            for entry in prefs.pinned_aliases.iter_mut() {
+                if *entry == old_alias {
+                    *entry = alias.to_string();
+                    prefs_changed = true;
+                }
+            }
+            if prefs_changed {
                 write_prefs_file(&prefs)?;
             }
         }
@@ -541,6 +555,14 @@ fn delete_model_config(alias: String) -> Result<(), String> {
     let dest_path = trash_dir.join(format!("{}.{}.json", alias, timestamp));
     fs::rename(&source_path, &dest_path).map_err(|e| e.to_string())?;
     cleanup_trash(&trash_dir, 10)?;
+
+    // 删除时从置顶列表移除
+    let mut prefs = read_prefs_file();
+    let before = prefs.pinned_aliases.len();
+    prefs.pinned_aliases.retain(|a| a != &alias);
+    if prefs.pinned_aliases.len() != before {
+        write_prefs_file(&prefs)?;
+    }
     Ok(())
 }
 

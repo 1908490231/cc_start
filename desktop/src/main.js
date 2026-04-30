@@ -7,7 +7,8 @@ let currentView = 'list';
 let currentEditingModel = null;
 let prefs = {
   remember_model: true,
-  last_alias: ''
+  last_alias: '',
+  pinned_aliases: []
 };
 
 const configList = document.getElementById('config-list');
@@ -33,11 +34,15 @@ function showToast(msg, duration = 3000) {
 async function loadPrefs() {
   try {
     prefs = await invoke('get_prefs');
+    if (!Array.isArray(prefs.pinned_aliases)) {
+      prefs.pinned_aliases = [];
+    }
   } catch (e) {
     console.error('加载偏好失败:', e);
     prefs = {
       remember_model: true,
-      last_alias: ''
+      last_alias: '',
+      pinned_aliases: []
     };
   }
 }
@@ -70,18 +75,33 @@ function renderConfigList(filter = '') {
       )
     : models;
 
-  if (filteredModels.length === 0) {
+  // 置顶项排到最前：按 prefs.pinned_aliases 中的顺序，未置顶项保持原文件系统顺序
+  const pinnedSet = new Set(prefs.pinned_aliases || []);
+  const pinnedItems = (prefs.pinned_aliases || [])
+    .map(a => filteredModels.find(m => m.alias === a))
+    .filter(Boolean);
+  const restItems = filteredModels.filter(m => !pinnedSet.has(m.alias));
+  const sortedModels = [...pinnedItems, ...restItems];
+
+  if (sortedModels.length === 0) {
     configList.innerHTML = '';
     emptyState.style.display = 'block';
     return;
   }
 
   emptyState.style.display = 'none';
-  configList.innerHTML = filteredModels.map((m, index) => `
+  configList.innerHTML = sortedModels.map((m, index) => {
+    const isPinned = pinnedSet.has(m.alias);
+    return `
     <div class="config-row ${lastAlias && m.alias === lastAlias ? 'last-launched' : ''}" data-index="${index}" data-alias="${m.alias}">
       <div class="config-row-left">
         <div class="config-info">
-          <div class="config-display-name">${m.display_name || m.alias}</div>
+          <div class="config-display-name">
+            <button type="button" class="btn-pin ${isPinned ? 'pinned' : ''}" data-action="pin"
+              title="${isPinned ? '取消置顶' : '置顶'}"
+              aria-label="${isPinned ? '取消置顶' : '置顶'}">📌</button>
+            <span class="config-display-name-text">${m.display_name || m.alias}</span>
+          </div>
           <div class="config-alias">
             <input type="text" class="config-alias-input"
               value="${m.alias || ''}"
@@ -112,8 +132,11 @@ function renderConfigList(filter = '') {
         </div>
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
+  // 排序后的列表带 data-index，但 getRowData / models[index] 用的是原始 models 数组的下标。
+  // 为了简化，所有按 data-index 取模型的地方改成按 data-alias 查找。
   bindConfigRowEvents();
 
   if (lastAlias) {
@@ -130,20 +153,25 @@ function bindConfigRowEvents() {
   document.querySelectorAll('[data-action="copy"]').forEach(btn => btn.addEventListener('click', handleDuplicate));
   document.querySelectorAll('[data-action="delete"]').forEach(btn => btn.addEventListener('click', handleDelete));
   document.querySelectorAll('[data-action="browse"]').forEach(btn => btn.addEventListener('click', handleBrowse));
+  document.querySelectorAll('[data-action="pin"]').forEach(btn => btn.addEventListener('click', handlePinToggle));
   document.querySelectorAll('.config-alias-input, .path-input, .mode-select').forEach(input => {
     input.addEventListener('change', handleFieldChange);
   });
 }
 
+function findModelByAlias(alias) {
+  return models.find(m => m.alias === alias);
+}
+
 function getRowData(row) {
-  const index = parseInt(row.dataset.index);
-  const model = models[index];
+  const aliasFromDataset = row.dataset.alias;
+  const model = findModelByAlias(aliasFromDataset);
   const alias = row.querySelector('[data-field="alias"]').value;
   const mode = row.querySelector('[data-field="mode"]').value;
   const working_dir = row.querySelector('[data-field="working_dir"]').value;
 
   return {
-    ...model,
+    ...(model || {}),
     alias,
     mode,
     working_dir
@@ -155,7 +183,7 @@ async function handleFieldChange(e) {
   if (!row) return;
 
   const rowData = getRowData(row);
-  const originalModel = models[parseInt(row.dataset.index)];
+  const originalModel = findModelByAlias(row.dataset.alias);
   if (!originalModel || !rowData.alias) return;
 
   if (e.target.dataset.field === 'alias' && /[㐀-鿿豈-﫿]/.test(rowData.alias)) {
@@ -221,8 +249,7 @@ async function handleLaunch(e) {
 
 function handleEdit(e) {
   const row = e.target.closest('.config-row');
-  const index = parseInt(row.dataset.index);
-  const model = models[index];
+  const model = findModelByAlias(row.dataset.alias);
   openEditForModel(model);
 }
 
@@ -256,8 +283,7 @@ function openEditForModel(model) {
 
 async function handleDuplicate(e) {
   const row = e.target.closest('.config-row');
-  const index = parseInt(row.dataset.index);
-  const model = models[index];
+  const model = findModelByAlias(row.dataset.alias);
   if (!model || !model.alias) return;
 
   try {
@@ -275,8 +301,7 @@ async function handleDuplicate(e) {
 
 async function handleDelete(e) {
   const row = e.target.closest('.config-row');
-  const index = parseInt(row.dataset.index);
-  const model = models[index];
+  const model = findModelByAlias(row.dataset.alias);
   if (!model || !model.alias) return;
 
   const lastAlias = getLastLaunchedAlias();
@@ -317,6 +342,29 @@ async function handleBrowse(e) {
     }
   } catch (err) {
     console.error('选择目录失败:', err);
+  }
+}
+
+async function handlePinToggle(e) {
+  e.stopPropagation();
+  const row = e.target.closest('.config-row');
+  if (!row) return;
+  const alias = row.dataset.alias;
+  if (!alias) return;
+
+  const current = Array.isArray(prefs.pinned_aliases) ? [...prefs.pinned_aliases] : [];
+  const idx = current.indexOf(alias);
+  if (idx >= 0) {
+    current.splice(idx, 1);
+  } else {
+    current.unshift(alias); // 新置顶项排到最前
+  }
+
+  try {
+    await persistPrefs({ pinned_aliases: current });
+    renderConfigList(searchBox.value || '');
+  } catch (err) {
+    showToast('保存置顶失败: ' + err);
   }
 }
 
