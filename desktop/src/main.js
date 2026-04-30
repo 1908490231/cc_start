@@ -100,13 +100,13 @@ function renderConfigList(filter = '') {
       <div class="config-row-right">
         <div class="config-mode">
           <button type="button" class="btn-delete-row" data-action="delete" title="删除">🗑</button>
+          <button type="button" class="btn-copy" data-action="copy" title="复制">复制</button>
           <select class="mode-select" data-field="mode">
             <option value="normal" ${(m.mode || 'normal') === 'normal' ? 'selected' : ''}>普通启动</option>
             <option value="skip-permissions" ${m.mode === 'skip-permissions' ? 'selected' : ''}>跳过权限确认</option>
           </select>
         </div>
         <div class="config-buttons">
-          <button type="button" class="btn-copy" data-action="copy" title="复制">复制</button>
           <button type="button" class="btn-edit" data-action="edit">修改</button>
           <button type="button" class="btn-launch" data-action="launch">启动</button>
         </div>
@@ -871,10 +871,15 @@ function buildConfigJson() {
     if (val) json.env[key] = val;
     else delete json.env[key];
   };
+  // 强制按规范顺序 HAIKU → SONNET → OPUS 重写：先 delete 再 set，
+  // 让 JS 对象的"插入顺序"决定最终 JSON 输出顺序
+  delete json.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+  delete json.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+  delete json.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
   setOrDel('ANTHROPIC_MODEL', currentEditingModel.model_id);
   setOrDel('ANTHROPIC_DEFAULT_HAIKU_MODEL', currentEditingModel.haiku_model);
-  setOrDel('ANTHROPIC_DEFAULT_OPUS_MODEL', currentEditingModel.opus_model);
   setOrDel('ANTHROPIC_DEFAULT_SONNET_MODEL', currentEditingModel.sonnet_model);
+  setOrDel('ANTHROPIC_DEFAULT_OPUS_MODEL', currentEditingModel.opus_model);
 
   const authMode = currentEditingModel._authMode || 'AUTH_TOKEN';
   if (currentEditingModel.api_key) {

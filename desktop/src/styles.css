@@ -119,7 +119,7 @@ body {
   transition: border-color 0.2s, box-shadow 0.2s;
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 24px;
 }
 
@@ -214,11 +214,12 @@ body {
   border-color: #d5c5b8;
 }
 
-/* 右侧：模式 + 按钮 */
+/* 右侧：模式 + 按钮，撑满左列高度，让顶/底两行与左侧"显示名/路径行"基线对齐 */
 .config-row-right {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  justify-content: space-between;
   gap: 12px;
 }
 
