@@ -8,7 +8,8 @@ let currentEditingModel = null;
 let prefs = {
   remember_model: true,
   last_alias: '',
-  pinned_aliases: []
+  pinned_aliases: [],
+  custom_order: []
 };
 
 const configList = document.getElementById('config-list');
@@ -37,12 +38,16 @@ async function loadPrefs() {
     if (!Array.isArray(prefs.pinned_aliases)) {
       prefs.pinned_aliases = [];
     }
+    if (!Array.isArray(prefs.custom_order)) {
+      prefs.custom_order = [];
+    }
   } catch (e) {
     console.error('加载偏好失败:', e);
     prefs = {
       remember_model: true,
       last_alias: '',
-      pinned_aliases: []
+      pinned_aliases: [],
+      custom_order: []
     };
   }
 }
@@ -80,7 +85,19 @@ function renderConfigList(filter = '') {
   const pinnedItems = (prefs.pinned_aliases || [])
     .map(a => filteredModels.find(m => m.alias === a))
     .filter(Boolean);
-  const restItems = filteredModels.filter(m => !pinnedSet.has(m.alias));
+
+  // 普通区：先按 custom_order 中的顺序展示在 custom_order 里的项，
+  // 然后按文件系统顺序追加未在 custom_order 中的项（首次升级或新加未拖过的）
+  const orderSet = new Set(prefs.custom_order || []);
+  const normalAll = filteredModels.filter(m => !pinnedSet.has(m.alias));
+  const normalAllSet = new Set(normalAll.map(m => m.alias));
+  const orderedNormal = (prefs.custom_order || [])
+    .map(a => normalAll.find(m => m.alias === a))
+    .filter(Boolean);
+  const trailingNormal = normalAll.filter(m => !orderSet.has(m.alias));
+  const restItems = [...orderedNormal, ...trailingNormal];
+
+  // sortedModels 仅用于判空和定位"上次启动行"，分区渲染由下方两个 map 完成
   const sortedModels = [...pinnedItems, ...restItems];
 
   if (sortedModels.length === 0) {
@@ -90,10 +107,14 @@ function renderConfigList(filter = '') {
   }
 
   emptyState.style.display = 'none';
-  configList.innerHTML = sortedModels.map((m, index) => {
-    const isPinned = pinnedSet.has(m.alias);
+
+  const renderRow = (m, section) => {
+    const isPinned = section === 'pinned';
     return `
-    <div class="config-row ${lastAlias && m.alias === lastAlias ? 'last-launched' : ''}" data-index="${index}" data-alias="${m.alias}">
+    <div class="config-row ${lastAlias && m.alias === lastAlias ? 'last-launched' : ''}"
+      data-alias="${m.alias}" data-section="${section}">
+      <button type="button" class="drag-handle" data-action="drag-handle"
+        title="拖动调整顺序" aria-label="拖动调整顺序">⋮⋮</button>
       <div class="config-row-left">
         <div class="config-info">
           <div class="config-display-name">
@@ -133,10 +154,16 @@ function renderConfigList(filter = '') {
       </div>
     </div>
   `;
-  }).join('');
+  };
 
-  // 排序后的列表带 data-index，但 getRowData / models[index] 用的是原始 models 数组的下标。
-  // 为了简化，所有按 data-index 取模型的地方改成按 data-alias 查找。
+  const pinnedHtml = pinnedItems.map(m => renderRow(m, 'pinned')).join('');
+  const normalHtml = restItems.map(m => renderRow(m, 'normal')).join('');
+  // 仅当两区都有项时插入分隔线，便于视觉区分
+  const dividerHtml = (pinnedItems.length > 0 && restItems.length > 0)
+    ? '<div class="section-divider" aria-hidden="true"></div>'
+    : '';
+  configList.innerHTML = pinnedHtml + dividerHtml + normalHtml;
+
   bindConfigRowEvents();
 
   if (lastAlias) {
@@ -157,6 +184,7 @@ function bindConfigRowEvents() {
   document.querySelectorAll('.config-alias-input, .path-input, .mode-select').forEach(input => {
     input.addEventListener('change', handleFieldChange);
   });
+  bindRowDragEvents();
 }
 
 function findModelByAlias(alias) {
@@ -365,6 +393,95 @@ async function handlePinToggle(e) {
     renderConfigList(searchBox.value || '');
   } catch (err) {
     showToast('保存置顶失败: ' + err);
+  }
+}
+
+// ===== 拖动排序（基于 mouse 事件，不用 HTML5 drag API）=====
+// HTML5 drag 在 Tauri/WebView2 上拦截器经常打不到，这里用 mousedown/mousemove/mouseup 自己实现。
+// dragState 仅在一次拖动期间使用，mousedown 设置，mouseup 清除。
+let dragState = null;
+
+function bindRowDragEvents() {
+  document.querySelectorAll('.drag-handle').forEach(handle => {
+    handle.addEventListener('mousedown', handleHandleMouseDown);
+  });
+}
+
+function handleHandleMouseDown(e) {
+  if (e.button !== 0) return; // 仅左键
+  e.preventDefault();         // 阻止默认的文本选择/原生拖动行为
+  e.stopPropagation();
+
+  const handle = e.currentTarget;
+  const row = handle.closest('.config-row');
+  if (!row) return;
+  const alias = row.dataset.alias;
+  const section = row.dataset.section;
+  if (!alias || !section) return;
+
+  dragState = { alias, section, row };
+  row.classList.add('dragging');
+  document.body.classList.add('row-dragging');
+
+  document.addEventListener('mousemove', handleDocMouseMove);
+  document.addEventListener('mouseup', handleDocMouseUp);
+}
+
+function handleDocMouseMove(e) {
+  if (!dragState) return;
+
+  const targetRow = findRowAtY(e.clientY, dragState.section);
+  if (!targetRow || targetRow === dragState.row) return;
+
+  const rect = targetRow.getBoundingClientRect();
+  const insertBefore = (e.clientY - rect.top) < (rect.height / 2);
+
+  // 直接重排 DOM 显示实时反馈，不落盘
+  if (insertBefore) {
+    if (targetRow.previousElementSibling !== dragState.row) {
+      targetRow.parentNode.insertBefore(dragState.row, targetRow);
+    }
+  } else {
+    if (targetRow.nextElementSibling !== dragState.row) {
+      targetRow.parentNode.insertBefore(dragState.row, targetRow.nextElementSibling);
+    }
+  }
+}
+
+function findRowAtY(y, section) {
+  const rows = document.querySelectorAll(`.config-row[data-section="${section}"]`);
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    if (y >= rect.top && y <= rect.bottom) {
+      return row;
+    }
+  }
+  return null;
+}
+
+async function handleDocMouseUp() {
+  if (!dragState) return;
+  document.removeEventListener('mousemove', handleDocMouseMove);
+  document.removeEventListener('mouseup', handleDocMouseUp);
+
+  const { row, section } = dragState;
+  row.classList.remove('dragging');
+  document.body.classList.remove('row-dragging');
+
+  // 提交：从当前 DOM 读取该区域当前顺序
+  const visibleAliases = Array.from(
+    document.querySelectorAll(`.config-row[data-section="${section}"]`)
+  ).map(r => r.dataset.alias);
+
+  dragState = null;
+
+  const key = section === 'pinned' ? 'pinned_aliases' : 'custom_order';
+  try {
+    await persistPrefs({ [key]: visibleAliases });
+    renderConfigList(searchBox.value || '');
+  } catch (err) {
+    showToast('保存排序失败: ' + err);
+    renderConfigList(searchBox.value || '');
   }
 }
 
@@ -1140,6 +1257,16 @@ async function saveCurrentConfig(closeAfter = true) {
 
     if (previousAlias === null) {
       models.push({ ...currentEditingModel });
+      // 新增配置：unshift 到 custom_order，让它出现在普通区顶部
+      const nextOrder = Array.isArray(prefs.custom_order) ? [...prefs.custom_order] : [];
+      const existingIdx = nextOrder.indexOf(alias);
+      if (existingIdx >= 0) nextOrder.splice(existingIdx, 1);
+      nextOrder.unshift(alias);
+      try {
+        await persistPrefs({ custom_order: nextOrder });
+      } catch (err) {
+        console.error('更新 custom_order 失败:', err);
+      }
     } else {
       const index = models.findIndex(m => m.alias === previousAlias);
       if (index !== -1) {

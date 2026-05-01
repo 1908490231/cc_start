@@ -63,6 +63,8 @@ struct UserPrefs {
     last_alias: String,
     #[serde(default)]
     pinned_aliases: Vec<String>,
+    #[serde(default)]
+    custom_order: Vec<String>,
 }
 
 fn default_prefs() -> UserPrefs {
@@ -70,6 +72,7 @@ fn default_prefs() -> UserPrefs {
         remember_model: true,
         last_alias: String::new(),
         pinned_aliases: Vec::new(),
+        custom_order: Vec::new(),
     }
 }
 
@@ -408,6 +411,13 @@ fn save_model_config_in_dir(models_dir: &PathBuf, params: SaveModelParams) -> Re
                     prefs_changed = true;
                 }
             }
+            // 重命名时同步自定义排序里的旧别名
+            for entry in prefs.custom_order.iter_mut() {
+                if *entry == old_alias {
+                    *entry = alias.to_string();
+                    prefs_changed = true;
+                }
+            }
             if prefs_changed {
                 write_prefs_file(&prefs)?;
             }
@@ -556,11 +566,15 @@ fn delete_model_config(alias: String) -> Result<(), String> {
     fs::rename(&source_path, &dest_path).map_err(|e| e.to_string())?;
     cleanup_trash(&trash_dir, 10)?;
 
-    // 删除时从置顶列表移除
+    // 删除时从置顶列表和自定义排序中移除
     let mut prefs = read_prefs_file();
-    let before = prefs.pinned_aliases.len();
+    let pinned_before = prefs.pinned_aliases.len();
+    let order_before = prefs.custom_order.len();
     prefs.pinned_aliases.retain(|a| a != &alias);
-    if prefs.pinned_aliases.len() != before {
+    prefs.custom_order.retain(|a| a != &alias);
+    if prefs.pinned_aliases.len() != pinned_before
+        || prefs.custom_order.len() != order_before
+    {
         write_prefs_file(&prefs)?;
     }
     Ok(())
