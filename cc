@@ -22,21 +22,103 @@ USER_SETTINGS="$HOME_DIR/.claude/settings.json"
 # 查找 Claude Code 可执行文件（Windows 下是 claude.exe）
 find_claude_bin() {
     if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || -n "$MSYSTEM" ]]; then
+        # 1) PATH 中查找
         if which claude.exe &>/dev/null; then
             which claude.exe
+            return
         elif which claude &>/dev/null; then
             which claude
-        elif command -v npx &>/dev/null; then
-            echo "npx @anthropic-ai/claude-code"
+            return
+        fi
+        # 2) npm 全局目录直接查找（绕过 PATH 缺失问题）
+        local npm_bin=""
+        npm_bin="$(npm prefix -g 2>/dev/null)/bin"
+        if [[ -n "$npm_bin" && -d "$npm_bin" ]]; then
+            if [[ -f "$npm_bin/claude" ]]; then
+                echo "$npm_bin/claude"
+                return
+            elif [[ -f "$npm_bin/claude.cmd" ]]; then
+                echo "$npm_bin/claude.cmd"
+                return
+            fi
+        fi
+        # 3) 兜底：npx -y 免交互安装
+        if command -v npx &>/dev/null; then
+            echo "npx -y @anthropic-ai/claude-code"
         else
             echo "$HOME_DIR/.local/bin/claude.exe"
         fi
     else
-        which claude 2>/dev/null || echo "$HOME_DIR/.local/bin/claude"
+        local claude_path
+        claude_path="$(which claude 2>/dev/null)"
+        if [[ -n "$claude_path" ]]; then
+            echo "$claude_path"
+        else
+            echo "$HOME_DIR/.local/bin/claude"
+        fi
     fi
 }
 
 CLAUDE_BIN="$(find_claude_bin)"
+
+# ─── DeepSeek 特殊配置支持 ─────────────────────────────────────
+
+# 已知的环境变量列表（空格分隔，方便遍历）
+ENV_VAR_NAMES="ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+
+# 检测是否为 DeepSeek API 端点
+is_deepseek_api() {
+    local url="$1"
+    [[ "$url" == *"deepseek"* ]]
+}
+
+# 给模型名加 [1m] 后缀（如果还没有上下文窗口后缀的话）
+ensure_1m_suffix() {
+    local model="$1"
+    if [[ "$model" =~ \[1[mM]\] ]] || [[ "$model" =~ \[[0-9]+[kKmM]\] ]]; then
+        echo "$model"
+    else
+        echo "${model}[1m]"
+    fi
+}
+
+# 在 JSON 文件中设置单个字段（存在则替换，不存在则插入）
+set_json_field() {
+    local json_file="$1"
+    local key="$2"
+    local val="$3"
+    local tmpfile="${json_file}.tmp"
+
+    if grep -q "\"$key\":" "$json_file" 2>/dev/null; then
+        sed -i "s#\"$key\": \"[^\"]*\"#\"$key\": \"${val}\"#g" "$json_file" 2>/dev/null || true
+    else
+        awk -v k="$key" -v v="$val" '
+            { lines[NR] = $0 }
+            END {
+                for (i = 1; i <= NR; i++) {
+                    if (i == NR && lines[i] ~ /^[[:space:]]*}/) {
+                        print "  \"" k "\": \"" v "\","
+                    }
+                    print lines[i]
+                }
+            }
+        ' "$json_file" > "$tmpfile" && mv "$tmpfile" "$json_file"
+    fi
+}
+
+# 写入 DeepSeek 特有的默认环境变量到配置文件
+write_deepseek_defaults() {
+    local json_file="$1"
+    local pro_model="$2"  # 带[1m]的pro模型名
+    local flash_model="deepseek-v4-flash"
+
+    set_json_field "$json_file" "ANTHROPIC_DEFAULT_OPUS_MODEL" "$pro_model"
+    set_json_field "$json_file" "ANTHROPIC_DEFAULT_SONNET_MODEL" "$pro_model"
+    set_json_field "$json_file" "ANTHROPIC_DEFAULT_HAIKU_MODEL" "$flash_model"
+    set_json_field "$json_file" "CLAUDE_CODE_SUBAGENT_MODEL" "$flash_model"
+    set_json_field "$json_file" "CLAUDE_CODE_EFFORT_LEVEL" "max"
+    set_json_field "$json_file" "CLAUDE_CODE_AUTO_COMPACT_WINDOW" "400000"
+}
 
 # 颜色定义
 CYA='\033[0;36m'
@@ -73,8 +155,8 @@ update_json_env() {
     local base_url="$4"
     local tmpfile="${json_file}.tmp"
 
-    # 先尝试替换已存在的字段
-    sed -i         -e "s#\"ANTHROPIC_AUTH_TOKEN\": \"[^\"]*\"#\"ANTHROPIC_AUTH_TOKEN\": \"${api_key}\"#g"         -e "s#\"ANTHROPIC_BASE_URL\": \"[^\"]*\"#\"ANTHROPIC_BASE_URL\": \"${base_url}\"#g"         -e "s#\"ANTHROPIC_MODEL\": \"[^\"]*\"#\"ANTHROPIC_MODEL\": \"${model_name}\"#g"         "$json_file" 2>/dev/null || true
+    # 先尝试替换已存在的字段（包括 DeepSeek 扩展字段）
+    sed -i         -e "s#\"ANTHROPIC_AUTH_TOKEN\": \"[^\"]*\"#\"ANTHROPIC_AUTH_TOKEN\": \"${api_key}\"#g"         -e "s#\"ANTHROPIC_BASE_URL\": \"[^\"]*\"#\"ANTHROPIC_BASE_URL\": \"${base_url}\"#g"         -e "s#\"ANTHROPIC_MODEL\": \"[^\"]*\"#\"ANTHROPIC_MODEL\": \"${model_name}\"#g"         -e "s#\"ANTHROPIC_DEFAULT_OPUS_MODEL\": \"[^\"]*\"#\"ANTHROPIC_DEFAULT_OPUS_MODEL\": \"${model_name}\"#g"         -e "s#\"ANTHROPIC_DEFAULT_SONNET_MODEL\": \"[^\"]*\"#\"ANTHROPIC_DEFAULT_SONNET_MODEL\": \"${model_name}\"#g"         -e "s#\"ANTHROPIC_DEFAULT_HAIKU_MODEL\": \"[^\"]*\"#\"ANTHROPIC_DEFAULT_HAIKU_MODEL\": \"${model_name}\"#g"         "$json_file" 2>/dev/null || true
 
     # 对于不存在的字段，在最后一个 } 前插入（使用 awk，Git Bash 自带）
     for pair in "ANTHROPIC_AUTH_TOKEN:${api_key}" "ANTHROPIC_BASE_URL:${base_url}" "ANTHROPIC_MODEL:${model_name}"; do
@@ -108,21 +190,188 @@ read_json_field() {
     sed -n "s/.*\"$field\": \"\\([^\"]*\\)\".*/\\1/p" "$json_file" 2>/dev/null | head -1
 }
 
+# 创建合并的 settings 临时文件：全局 settings.json 非 env 部分 + per-model 的 API 凭证
+# 返回临时文件路径，调用方负责清理
+create_merged_settings() {
+    local model_config="$1"
+    local tmpfile
+    tmpfile=$(mktemp "${TMPDIR:-/tmp}/cc-settings-XXXXXX.json" 2>/dev/null || mktemp)
+
+    if [[ -f "$USER_SETTINGS" ]]; then
+        local api_key base_url model_id opus_model sonnet_model haiku_model subagent_model effort_level compact_window
+        api_key=$(read_json_field "$model_config" "ANTHROPIC_AUTH_TOKEN")
+        base_url=$(read_json_field "$model_config" "ANTHROPIC_BASE_URL")
+        model_id=$(read_json_field "$model_config" "ANTHROPIC_MODEL")
+        opus_model=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_OPUS_MODEL")
+        sonnet_model=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_SONNET_MODEL")
+        haiku_model=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+        subagent_model=$(read_json_field "$model_config" "CLAUDE_CODE_SUBAGENT_MODEL")
+        effort_level=$(read_json_field "$model_config" "CLAUDE_CODE_EFFORT_LEVEL")
+        compact_window=$(read_json_field "$model_config" "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+
+        if [[ -z "$model_id" ]]; then
+            model_id=$(read_json_field "$model_config" "model")
+        fi
+
+        # 用模型 ID 填充默认模型映射（如果未单独设置）
+        [[ -z "$opus_model" ]] && opus_model="$model_id"
+        [[ -z "$sonnet_model" ]] && sonnet_model="$model_id"
+        [[ -z "$haiku_model" ]] && haiku_model="$model_id"
+
+        awk -v ak="$api_key" -v bu="$base_url" -v mid="$model_id" \
+            -v opus="$opus_model" -v sonnet="$sonnet_model" -v haiku="$haiku_model" \
+            -v subagent="$subagent_model" -v effort="$effort_level" -v compact="$compact_window" '
+        BEGIN { in_env = 0; env_depth = 0; printed_env = 0 }
+        {
+            # 检测 env 对象的开始
+            if ($0 ~ /"[[:space:]]*env[[:space:]]*"[[:space:]]*:[[:space:]]*\{/) {
+                in_env = 1
+                env_depth = 1
+                # 打印新的 env 块（用选中模型的凭证覆盖，条件输出扩展字段）
+                print "  \"env\": {"
+                printf "    \"ANTHROPIC_AUTH_TOKEN\": \"%s\"", ak
+                printf ",\n    \"ANTHROPIC_BASE_URL\": \"%s\"", bu
+                printf ",\n    \"ANTHROPIC_MODEL\": \"%s\"", mid
+                printf ",\n    \"ANTHROPIC_DEFAULT_HAIKU_MODEL\": \"%s\"", haiku
+                printf ",\n    \"ANTHROPIC_DEFAULT_SONNET_MODEL\": \"%s\"", sonnet
+                printf ",\n    \"ANTHROPIC_DEFAULT_OPUS_MODEL\": \"%s\"", opus
+                if (subagent != "") printf ",\n    \"CLAUDE_CODE_SUBAGENT_MODEL\": \"%s\"", subagent
+                if (effort != "") printf ",\n    \"CLAUDE_CODE_EFFORT_LEVEL\": \"%s\"", effort
+                if (compact != "") printf ",\n    \"CLAUDE_CODE_AUTO_COMPACT_WINDOW\": \"%s\"", compact
+                print ""
+                printed_env = 1
+                next
+            }
+            # 在 env 块内，计算嵌套深度
+            if (in_env) {
+                line_copy = $0
+                gsub(/[^{]/, "", $0); env_depth += length($0)
+                gsub(/[^}]/, "", line_copy); env_depth -= length(line_copy)
+                if (env_depth <= 0) {
+                    in_env = 0
+                    # 打印新 env 块的闭合括号，替代原 env 块
+                    if (printed_env) {
+                        printed_env = 0
+                        print "  },"
+                        next
+                    }
+                }
+                next
+            }
+            # 非 env 部分，原样输出
+            print
+        }
+        ' "$USER_SETTINGS" > "$tmpfile"
+
+        # 如果全局 settings.json 没有 env 块，在最后一个 } 前插入
+        if ! grep -q '"env"' "$tmpfile" 2>/dev/null; then
+            awk -v ak="$api_key" -v bu="$base_url" -v mid="$model_id" \
+                -v opus="$opus_model" -v sonnet="$sonnet_model" -v haiku="$haiku_model" \
+                -v subagent="$subagent_model" -v effort="$effort_level" -v compact="$compact_window" '
+                { lines[NR] = $0 }
+                END {
+                    for (i = 1; i <= NR; i++) {
+                        if (i == NR && lines[i] ~ /^[[:space:]]*}/) {
+                            print "  \"env\": {"
+                            printf "    \"ANTHROPIC_AUTH_TOKEN\": \"%s\"", ak
+                            printf ",\n    \"ANTHROPIC_BASE_URL\": \"%s\"", bu
+                            printf ",\n    \"ANTHROPIC_MODEL\": \"%s\"", mid
+                            printf ",\n    \"ANTHROPIC_DEFAULT_HAIKU_MODEL\": \"%s\"", haiku
+                            printf ",\n    \"ANTHROPIC_DEFAULT_SONNET_MODEL\": \"%s\"", sonnet
+                            printf ",\n    \"ANTHROPIC_DEFAULT_OPUS_MODEL\": \"%s\"", opus
+                            if (subagent != "") printf ",\n    \"CLAUDE_CODE_SUBAGENT_MODEL\": \"%s\"", subagent
+                            if (effort != "") printf ",\n    \"CLAUDE_CODE_EFFORT_LEVEL\": \"%s\"", effort
+                            if (compact != "") printf ",\n    \"CLAUDE_CODE_AUTO_COMPACT_WINDOW\": \"%s\"", compact
+                            print ""
+                            print "  },"
+                        }
+                        print lines[i]
+                    }
+                }
+            ' "$tmpfile" > "${tmpfile}.bak" && mv "${tmpfile}.bak" "$tmpfile"
+        fi
+    else
+        # 没有全局 settings.json，直接用 per-model 配置
+        cp "$model_config" "$tmpfile"
+    fi
+
+    echo "$tmpfile"
+}
+
 # 全局关联数组（需要 bash 4.0+，macOS 用户请通过 homebrew 安装：brew install bash）
 declare -A MODELS
 declare -A MODEL_DESCS
 
+# 迁移旧版 DeepSeek 配置：检测并补齐缺失的扩展字段
+# 返回 0 表示有变更，1 表示无需变更
+migrate_deepseek_config() {
+    local json_file="$1"
+    local base_url model_id
+
+    base_url=$(read_json_field "$json_file" "ANTHROPIC_BASE_URL")
+    model_id=$(read_json_field "$json_file" "ANTHROPIC_MODEL")
+
+    # 非 DeepSeek API 或没有必要字段，跳过
+    if ! is_deepseek_api "$base_url" || [[ -z "$model_id" ]]; then
+        return 1
+    fi
+
+    local changed=false
+
+    # 确保模型 ID 带 [1m] 后缀
+    local fixed_model
+    fixed_model=$(ensure_1m_suffix "$model_id")
+    if [[ "$fixed_model" != "$model_id" ]]; then
+        set_json_field "$json_file" "ANTHROPIC_MODEL" "$fixed_model"
+        changed=true
+    fi
+
+    # 补齐缺失的扩展字段
+    local need_defaults=false
+    for field in ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_AUTO_COMPACT_WINDOW; do
+        local val
+        val=$(read_json_field "$json_file" "$field")
+        if [[ -z "$val" ]]; then
+            need_defaults=true
+            break
+        fi
+    done
+
+    if $need_defaults; then
+        write_deepseek_defaults "$json_file" "$fixed_model"
+        changed=true
+    fi
+
+    if $changed; then
+        return 0
+    fi
+    return 1
+}
+
 # 自动扫描模型配置文件
 scan_models() {
     local config_dir="$1"
+    local migrated=0
 
     for json_file in "$config_dir"/*.json; do
         [[ -f "$json_file" ]] || continue
         local name=$(basename "$json_file" .json)
         MODELS["$name"]="$name"
+
+        # 静默迁移旧版 DeepSeek 配置
+        if migrate_deepseek_config "$json_file"; then
+            migrated=$((migrated + 1))
+        fi
+
         local model_id=$(sed -n 's/.*"ANTHROPIC_MODEL": "\([^"]*\)".*/\1/p' "$json_file" 2>/dev/null | head -1)
         MODEL_DESCS["$name"]="${model_id:-$name}"
     done
+
+    # 有迁移时输出提示
+    if [[ $migrated -gt 0 ]]; then
+        echo -e "  ${CYA}🔍 已自动升级 ${migrated} 个 DeepSeek 模型配置 (补齐 1M 上下文等扩展字段)${NC}"
+        echo ""
+    fi
 }
 
 # 交互式选择一个模型（返回名称到 $SELECTED_MODEL）
@@ -267,6 +516,18 @@ add_model() {
             continue
         fi
 
+        # DeepSeek 自动检测与配置
+        local is_ds=false
+        local ds_pro_model=""
+        if is_deepseek_api "$base_url"; then
+            is_ds=true
+            name="$(ensure_1m_suffix "$name")"
+            ds_pro_model="$name"
+            echo ""
+            echo -e "  ${CYA}🔍 检测到 DeepSeek API，已自动配置 1M 上下文窗口${NC}"
+            echo -e "  ${DIM}  模型 ID 已更新: ${name}${NC}"
+        fi
+
         # 确认
         echo ""
         echo -e "${BLU}╔═══════════════════════════════════╗${NC}"
@@ -277,6 +538,14 @@ add_model() {
         echo -e "  模型 ID:   ${name}"
         echo -e "  API Key:   ${api_key:0:8}${DIM}...${NC}${api_key: -4}"
         echo -e "  Base URL:  ${base_url}"
+        if $is_ds; then
+            echo ""
+            echo -e "  ${CYA}DeepSeek 特殊配置 (自动):${NC}"
+            echo -e "    Opus/Sonnet 模型:    ${ds_pro_model}"
+            echo -e "    Haiku/子代理模型:    deepseek-v4-flash"
+            echo -e "    Effort Level:        max"
+            echo -e "    自动压缩窗口上限:    400000"
+        fi
         echo ""
         read -e -p "  确认保存? (Y/n/r 重填): " action
         if [[ "$action" == "r" || "$action" == "R" ]]; then
@@ -291,14 +560,33 @@ add_model() {
         if [[ -f "$USER_SETTINGS" ]]; then
             cp "$USER_SETTINGS" "$CONFIG_DIR/${alias}.json"
             update_json_env "$CONFIG_DIR/${alias}.json" "$name" "$api_key" "$base_url"
+            if $is_ds; then
+                write_deepseek_defaults "$CONFIG_DIR/${alias}.json" "$ds_pro_model"
+            fi
         else
-            cat > "$CONFIG_DIR/${alias}.json" << EOF
+            if $is_ds; then
+                cat > "$CONFIG_DIR/${alias}.json" << EOF
+{
+  "ANTHROPIC_AUTH_TOKEN": "$api_key",
+  "ANTHROPIC_BASE_URL": "$base_url",
+  "ANTHROPIC_MODEL": "$name",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL": "${ds_pro_model}",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL": "${ds_pro_model}",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+  "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash",
+  "CLAUDE_CODE_EFFORT_LEVEL": "max",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+}
+EOF
+            else
+                cat > "$CONFIG_DIR/${alias}.json" << EOF
 {
   "ANTHROPIC_AUTH_TOKEN": "$api_key",
   "ANTHROPIC_BASE_URL": "$base_url",
   "ANTHROPIC_MODEL": "$name"
 }
 EOF
+            fi
         fi
 
         echo ""
@@ -337,6 +625,17 @@ edit_model() {
     local cur_name=$(read_json_field "$model_config" "ANTHROPIC_MODEL")
     local cur_key=$(read_json_field "$model_config" "ANTHROPIC_AUTH_TOKEN")
     local cur_url=$(read_json_field "$model_config" "ANTHROPIC_BASE_URL")
+    local cur_opus=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_OPUS_MODEL")
+    local cur_sonnet=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_SONNET_MODEL")
+    local cur_haiku=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+    local cur_subagent=$(read_json_field "$model_config" "CLAUDE_CODE_SUBAGENT_MODEL")
+    local cur_effort=$(read_json_field "$model_config" "CLAUDE_CODE_EFFORT_LEVEL")
+    local cur_compact=$(read_json_field "$model_config" "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+
+    local is_ds_edit=false
+    if is_deepseek_api "$cur_url"; then
+        is_ds_edit=true
+    fi
 
     echo ""
     echo -e "${BLU}╔═══════════════════════════════════╗${NC}"
@@ -355,11 +654,41 @@ edit_model() {
     read -e -p "  Base URL [${cur_url}]: " base_url
     [[ -z "$base_url" ]] && base_url="$cur_url"
 
+    # 检测 URL 变更后是否为 DeepSeek，自动处理 [1m] 后缀
+    local is_ds_now=false
+    local ds_pro_model=""
+    if is_deepseek_api "$base_url"; then
+        is_ds_now=true
+        name="$(ensure_1m_suffix "$name")"
+        ds_pro_model="$name"
+    fi
+
+    # 如果是 DeepSeek 模型，允许编辑扩展字段
+    local subagent_model="$cur_subagent"
+    local effort_level="$cur_effort"
+    local compact_window="$cur_compact"
+    if $is_ds_now; then
+        echo ""
+        echo -e "  ${CYA}DeepSeek 扩展配置 (直接回车保留默认):${NC}"
+        read -e -p "    Haiku/子代理模型 [${cur_subagent:-deepseek-v4-flash}]: " subagent_model
+        [[ -z "$subagent_model" ]] && subagent_model="${cur_subagent:-deepseek-v4-flash}"
+        read -e -p "    Effort Level [${cur_effort:-max}]: " effort_level
+        [[ -z "$effort_level" ]] && effort_level="${cur_effort:-max}"
+        read -e -p "    自动压缩窗口上限 [${cur_compact:-400000}]: " compact_window
+        [[ -z "$compact_window" ]] && compact_window="${cur_compact:-400000}"
+        [[ -z "$ds_pro_model" ]] && ds_pro_model="$name"
+    fi
+
     echo ""
     echo -e "  ${BOLD}确认修改:${NC}"
     echo -e "    模型 ID:   ${name}"
     echo -e "    API Key:   ${api_key:0:8}${DIM}...${NC}${api_key: -4}"
     echo -e "    Base URL:  ${base_url}"
+    if $is_ds_now; then
+        echo -e "    ${CYA}Haiku/SubAgent:  ${subagent_model}${NC}"
+        echo -e "    ${CYA}Effort Level:    ${effort_level}${NC}"
+        echo -e "    ${CYA}Compact Window:  ${compact_window}${NC}"
+    fi
     echo ""
     read -e -p "  确认保存? (Y/n): " confirm
     if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
@@ -369,6 +698,15 @@ edit_model() {
 
     update_json_env "$model_config" "$name" "$api_key" "$base_url"
     MODEL_DESCS["$model"]="$name"
+
+    if $is_ds_now; then
+        write_deepseek_defaults "$model_config" "$ds_pro_model"
+        # 覆盖用户自定义的扩展字段
+        [[ -n "$subagent_model" ]] && set_json_field "$model_config" "CLAUDE_CODE_SUBAGENT_MODEL" "$subagent_model"
+        [[ -n "$effort_level" ]] && set_json_field "$model_config" "CLAUDE_CODE_EFFORT_LEVEL" "$effort_level"
+        [[ -n "$compact_window" ]] && set_json_field "$model_config" "CLAUDE_CODE_AUTO_COMPACT_WINDOW" "$compact_window"
+        set_json_field "$model_config" "ANTHROPIC_DEFAULT_HAIKU_MODEL" "${subagent_model:-deepseek-v4-flash}"
+    fi
 
     echo ""
     echo -e "  ${GREEN}✓ 模型 '${model}' 已更新${NC}"
@@ -449,13 +787,87 @@ sync_model() {
     local cur_key=$(read_json_field "$model_config" "ANTHROPIC_AUTH_TOKEN")
     local cur_url=$(read_json_field "$model_config" "ANTHROPIC_BASE_URL")
 
+    # 保存 DeepSeek 扩展字段（如果存在）
+    local cur_subagent cur_effort cur_compact cur_opus cur_sonnet cur_haiku
+    cur_subagent=$(read_json_field "$model_config" "CLAUDE_CODE_SUBAGENT_MODEL")
+    cur_effort=$(read_json_field "$model_config" "CLAUDE_CODE_EFFORT_LEVEL")
+    cur_compact=$(read_json_field "$model_config" "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+    cur_opus=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_OPUS_MODEL")
+    cur_sonnet=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_SONNET_MODEL")
+    cur_haiku=$(read_json_field "$model_config" "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+
     cp "$USER_SETTINGS" "$model_config"
     update_json_env "$model_config" "$cur_name" "$cur_key" "$cur_url"
+
+    # 恢复 DeepSeek 扩展字段
+    if is_deepseek_api "$cur_url"; then
+        [[ -n "$cur_opus" ]] && set_json_field "$model_config" "ANTHROPIC_DEFAULT_OPUS_MODEL" "$cur_opus"
+        [[ -n "$cur_sonnet" ]] && set_json_field "$model_config" "ANTHROPIC_DEFAULT_SONNET_MODEL" "$cur_sonnet"
+        [[ -n "$cur_haiku" ]] && set_json_field "$model_config" "ANTHROPIC_DEFAULT_HAIKU_MODEL" "$cur_haiku"
+        [[ -n "$cur_subagent" ]] && set_json_field "$model_config" "CLAUDE_CODE_SUBAGENT_MODEL" "$cur_subagent"
+        [[ -n "$cur_effort" ]] && set_json_field "$model_config" "CLAUDE_CODE_EFFORT_LEVEL" "$cur_effort"
+        [[ -n "$cur_compact" ]] && set_json_field "$model_config" "CLAUDE_CODE_AUTO_COMPACT_WINDOW" "$cur_compact"
+    fi
 
     echo ""
     echo -e "  ${GREEN}✓ 模型 '${model}' 已同步${NC}"
     echo -e "  ${DIM}MCP / 插件配置已更新，API 信息已保留${NC}"
     echo -e "  ${DIM}${cur_name} @ ${cur_url}${NC}"
+}
+
+# 升级所有旧版 DeepSeek 配置（补齐扩展字段）
+upgrade_models() {
+    echo ""
+    echo -e "${BLU}╔═══════════════════════════════════╗${NC}"
+    echo -e "${BLU}║     升级模型配置                  ║${NC}"
+    echo -e "${BLU}╚═══════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${DIM}扫描并补齐 DeepSeek 模型的扩展字段...${NC}"
+    echo ""
+
+    local upgraded=0 total=0
+    for json_file in "$CONFIG_DIR"/*.json; do
+        [[ -f "$json_file" ]] || continue
+        total=$((total + 1))
+        local name=$(basename "$json_file" .json)
+        local base_url
+        base_url=$(read_json_field "$json_file" "ANTHROPIC_BASE_URL")
+
+        if is_deepseek_api "$base_url"; then
+            local model_id
+            model_id=$(read_json_field "$json_file" "ANTHROPIC_MODEL")
+            local fixed_model=$(ensure_1m_suffix "$model_id")
+            local fields_before=""
+            local fields_after=""
+
+            # 检查哪些字段有变化
+            [[ "$fixed_model" != "$model_id" ]] && fields_before="${fields_before} [1m]后缀"
+            [[ -z "$(read_json_field "$json_file" "CLAUDE_CODE_AUTO_COMPACT_WINDOW")" ]] && fields_before="${fields_before} AUTO_COMPACT_WINDOW"
+            [[ -z "$(read_json_field "$json_file" "CLAUDE_CODE_EFFORT_LEVEL")" ]] && fields_before="${fields_before} EFFORT_LEVEL"
+            [[ -z "$(read_json_field "$json_file" "CLAUDE_CODE_SUBAGENT_MODEL")" ]] && fields_before="${fields_before} SUBAGENT_MODEL"
+
+            if [[ -n "$fields_before" ]]; then
+                if [[ "$fixed_model" != "$model_id" ]]; then
+                    set_json_field "$json_file" "ANTHROPIC_MODEL" "$fixed_model"
+                fi
+                write_deepseek_defaults "$json_file" "$fixed_model"
+                upgraded=$((upgraded + 1))
+                echo -e "  ${GREEN}✓${NC} ${name} → 已补齐:${fields_before}"
+            else
+                echo -e "  ${DIM}·${NC} ${name} → ${GREEN}已是最新${NC}"
+            fi
+        else
+            echo -e "  ${DIM}·${NC} ${name} → 非 DeepSeek，跳过"
+        fi
+    done
+
+    echo ""
+    if [[ $upgraded -gt 0 ]]; then
+        echo -e "  ${GREEN}✓ 已升级 ${upgraded} 个配置${NC}"
+    else
+        echo -e "  ${DIM}所有配置已是最新${NC}"
+    fi
+    echo ""
 }
 
 # 重置所有配置
@@ -534,7 +946,9 @@ launch_claude() {
                     '[B') selected=$(( (selected + 1) % count )) ;;
                 esac
                 printf "\033[${count}A"
-            elif [[ "$key" == "" ]]; then
+            elif [[ "$key" == "" || "$key" == $'\r' || "$key" == $'\n' ]]; then
+                # 消耗缓冲区中可能残留的 \n（\r\n 场景）
+                IFS= read -rsn1 -t 0.05 _drain <&3 2>/dev/null || true
                 break
             fi
         done
@@ -560,7 +974,9 @@ launch_claude() {
                     '[A') selected=$(( (selected - 1 + count) % count )) ;;
                     '[B') selected=$(( (selected + 1) % count )) ;;
                 esac
-            elif [[ "$key" == "" ]]; then
+            elif [[ "$key" == "" || "$key" == $'\r' || "$key" == $'\n' ]]; then
+                # 消耗缓冲区中可能残留的 \n（\r\n 场景）
+                IFS= read -rsn1 -t 0.05 _drain 2>/dev/null || true
                 break
             fi
         done
@@ -568,26 +984,23 @@ launch_claude() {
 
     printf '\033[?25h'  # 恢复光标
 
-    # 从配置文件中读取 API 信息（支持 env 对象或顶层字段）
-    local api_key base_url model_id
-    api_key=$(sed -n 's/.*"ANTHROPIC_AUTH_TOKEN": "\([^"]*\)".*/\1/p' "$model_config" 2>/dev/null | head -1)
-    base_url=$(sed -n 's/.*"ANTHROPIC_BASE_URL": "\([^"]*\)".*/\1/p' "$model_config" 2>/dev/null | head -1)
-    model_id=$(sed -n 's/.*"ANTHROPIC_MODEL": "\([^"]*\)".*/\1/p' "$model_config" 2>/dev/null | head -1)
+    # 从配置文件中读取所有环境变量并逐一导出
+    # 这才是 Claude Code 真正读取第三方 API 的方式
+    for var_name in $ENV_VAR_NAMES; do
+        local var_val
+        var_val=$(sed -n "s/.*\"$var_name\": \"\\([^\"]*\\)\".*/\\1/p" "$model_config" 2>/dev/null | head -1)
+        if [[ -n "$var_val" ]]; then
+            export "${var_name}=${var_val}"
+        fi
+    done
 
-    # 如果没找到 ANTHROPIC_MODEL，尝试顶层 model 字段
-    if [[ -z "$model_id" ]]; then
+    # 向后兼容：如果有顶层 model 字段且 ANTHROPIC_MODEL 未设置
+    if [[ -z "${ANTHROPIC_MODEL:-}" ]]; then
+        local model_id
         model_id=$(sed -n 's/.*"model": "\([^"]*\)".*/\1/p' "$model_config" 2>/dev/null | head -1)
-    fi
-
-    # 导出环境变量（这才是 Claude Code 真正读取第三方 API 的方式）
-    if [[ -n "$api_key" ]]; then
-        export ANTHROPIC_AUTH_TOKEN="$api_key"
-    fi
-    if [[ -n "$base_url" ]]; then
-        export ANTHROPIC_BASE_URL="$base_url"
-    fi
-    if [[ -n "$model_id" ]]; then
-        export ANTHROPIC_MODEL="$model_id"
+        if [[ -n "$model_id" ]]; then
+            export ANTHROPIC_MODEL="$model_id"
+        fi
     fi
 
     echo ""
@@ -596,25 +1009,32 @@ launch_claude() {
     echo -e "${BLU}╚═══════════════════════════════════╝${NC}"
     echo ""
     echo -e "  ${GREEN}▶${NC} 模型: ${BOLD}${MODEL_DESCS[$model]}${NC}"
-    if [[ -n "$model_id" ]]; then
-        echo -e "  ${DIM}  ID: ${model_id}${NC}"
+    if [[ -n "${ANTHROPIC_MODEL:-}" ]]; then
+        echo -e "  ${DIM}  ID: ${ANTHROPIC_MODEL}${NC}"
     fi
-    if [[ -n "$base_url" ]]; then
-        echo -e "  ${DIM}  URL: ${base_url}${NC}"
+    if [[ -n "${ANTHROPIC_BASE_URL:-}" ]]; then
+        echo -e "  ${DIM}  URL: ${ANTHROPIC_BASE_URL}${NC}"
     fi
     if [[ $selected -eq 1 ]]; then
         echo -e "  ${DIM}  模式: dangerously-skip-permissions${NC}"
     fi
     echo ""
 
-    # 使用 --settings 参数直接指定配置文件，避免多窗口冲突
+    # 创建合并的 settings 临时文件（全局 settings 非 env 部分 + 本模型的 API 凭证）
+    # 避免全局 settings.json 的 env 块（如 mimo 凭证）覆盖选中模型的配置
+    local merged_settings
+    merged_settings="$(create_merged_settings "$model_config")"
+    trap 'rm -f "$merged_settings"' EXIT
+
+    # 使用 --settings 参数指定合并后的配置文件
     # 将 CLAUDE_BIN 拆分为数组，支持 npx 等多词命令
     read -ra CLAUDE_CMD <<< "$CLAUDE_BIN"
     if [[ $selected -eq 1 ]]; then
-        "${CLAUDE_CMD[@]}" --dangerously-skip-permissions --settings "$model_config" "$@"
+        "${CLAUDE_CMD[@]}" --dangerously-skip-permissions --settings "$merged_settings" "$@"
     else
-        "${CLAUDE_CMD[@]}" --settings "$model_config" "$@"
+        "${CLAUDE_CMD[@]}" --settings "$merged_settings" "$@"
     fi
+    rm -f "$merged_settings"
 }
 
 # ─── 帮助 ────────────────────────────────────────────────────
@@ -630,6 +1050,7 @@ show_help() {
     printf "  ${GREEN}%-22s${NC} %s\n" "${CMD_NAME} edit [模型名]" "编辑已有模型配置"
     printf "  ${GREEN}%-22s${NC} %s\n" "${CMD_NAME} remove [模型名]" "删除模型配置"
     printf "  ${GREEN}%-22s${NC} %s\n" "${CMD_NAME} sync [模型名]" "同步 MCP/插件到指定模型"
+    printf "  ${GREEN}%-22s${NC} %s\n" "${CMD_NAME} upgrade" "升级 DeepSeek 配置补齐扩展字段"
     printf "  ${GREEN}%-22s${NC} %s\n" "${CMD_NAME} reset" "重置所有配置"
     printf "  ${GREEN}%-22s${NC} %s\n" "${CMD_NAME} -h" "显示此帮助"
     echo ""
@@ -728,6 +1149,10 @@ main() {
             ;;
         sync)
             sync_model "$2"
+            exit $?
+            ;;
+        upgrade)
+            upgrade_models
             exit $?
             ;;
         reset)
