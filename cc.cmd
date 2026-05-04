@@ -10,4 +10,11 @@ if not exist "%BASH%" (
     exit /b 1
 )
 
-"%BASH%" -lic "\"$(cygpath -u '%~dp0cc')\" $*" -- %*
+set "SCRIPT_DIR=%~dp0"
+
+if not exist "%SCRIPT_DIR%cc" (
+    echo Error: cc script not found in %SCRIPT_DIR%
+    exit /b 1
+)
+
+"%BASH%" -l "%SCRIPT_DIR%cc" %*
