@@ -28,7 +28,7 @@ body {
   max-width: 1000px;
   min-width: 760px;
   margin: 0 auto;
-  padding: 24px 20px 40px;
+  padding: 0 20px 40px;
 }
 
 /* 标题 */
@@ -40,14 +40,20 @@ body {
   margin-bottom: 0;
 }
 
-/* 顶部栏 */
+/* 顶部栏：sticky 固定在窗口顶部，模仿详情页 .detail-header 的渐变 + 底部分隔线 */
 .header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
   flex-wrap: wrap;
   gap: 16px;
+  margin: 0 -20px 20px;
+  padding: 20px 20px 14px;
+  background: linear-gradient(135deg, #fff9f3 0%, #fff3e8 100%);
+  border-bottom: 1px solid rgba(224, 213, 200, 0.9);
 }
 
 .header-left {

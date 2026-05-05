@@ -770,13 +770,6 @@ function renderSettingsPage() {
     </div>
 
     <div class="settings-card">
-      <h3 class="settings-section-title">快捷操作</h3>
-      <div class="settings-actions">
-        <button type="button" class="btn-edit" id="open-models-dir-btn">打开配置文件夹</button>
-      </div>
-    </div>
-
-    <div class="settings-card">
       <h3 class="settings-section-title">关于</h3>
       <div class="settings-about-item">CC Start GUI 版本：<span id="app-version">读取中...</span></div>
       <div class="settings-about-item">Claude Code 版本：<span id="claude-version">读取中...</span></div>
@@ -789,21 +782,12 @@ function renderSettingsPage() {
 
 function bindSettingsEvents() {
   const rememberModel = document.getElementById('remember-model');
-  const openModelsDirBtn = document.getElementById('open-models-dir-btn');
 
   rememberModel.addEventListener('change', async () => {
     const next = rememberModel.checked;
     await persistPrefs({ remember_model: next, last_alias: next ? prefs.last_alias : '' });
     renderConfigList(searchBox.value || '');
     showToast('设置已保存');
-  });
-
-  openModelsDirBtn.addEventListener('click', async () => {
-    try {
-      await invoke('open_models_dir');
-    } catch (err) {
-      showToast('打开配置文件夹失败: ' + err);
-    }
   });
 }
 
@@ -1298,6 +1282,14 @@ function hideDetailPage() {
 backBtn.addEventListener('click', hideDetailPage);
 settingsBackBtn.addEventListener('click', showListPage);
 settingsBtn.addEventListener('click', showSettingsPage);
+
+document.getElementById('open-models-dir-btn').addEventListener('click', async () => {
+  try {
+    await invoke('open_models_dir');
+  } catch (err) {
+    showToast('打开配置文件夹失败: ' + err);
+  }
+});
 
 searchBox.addEventListener('input', (e) => {
   renderConfigList(e.target.value);
