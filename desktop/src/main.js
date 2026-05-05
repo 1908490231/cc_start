@@ -5,6 +5,7 @@ const confirmDialog = window.__TAURI__.dialog.confirm;
 let models = [];
 let currentView = 'list';
 let currentEditingModel = null;
+let initialScrollDone = false;
 let prefs = {
   remember_model: true,
   last_alias: '',
@@ -166,11 +167,12 @@ function renderConfigList(filter = '') {
 
   bindConfigRowEvents();
 
-  if (lastAlias) {
+  if (!initialScrollDone && lastAlias) {
     const activeRow = configList.querySelector(`.config-row[data-alias="${CSS.escape(lastAlias)}"]`);
     if (activeRow) {
       activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
+    initialScrollDone = true;
   }
 }
 
