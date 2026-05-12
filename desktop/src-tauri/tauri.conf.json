@@ -49,7 +49,8 @@
         "language": "zh-CN"
       },
       "nsis": {
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "template": "./nsis/installer.nsi"
       }
     }
   }
