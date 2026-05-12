@@ -389,6 +389,10 @@ FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
 
+; 5.5 Components page (CC Start customization: lets users opt out of the CLI sub-component)
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+!insertmacro MUI_PAGE_COMPONENTS
+
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder
 !if "${STARTMENUFOLDER}" != ""
@@ -475,6 +479,14 @@ FunctionEnd
   !include "{{this}}"
 {{/each}}
 
+; ============================================================================
+; CC Start Section display names (bilingual; requires source file UTF-8 BOM)
+; ============================================================================
+LangString SecCoreName ${LANG_SIMPCHINESE} "CC Start 桌面版（必装）"
+LangString SecCoreName ${LANG_ENGLISH}     "CC Start Desktop (required)"
+LangString SecCliName  ${LANG_SIMPCHINESE} "安装命令行启动器（cc 命令）"
+LangString SecCliName  ${LANG_ENGLISH}     "Install CLI launcher (cc command)"
+
 Function .onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
@@ -525,7 +537,15 @@ Function .onInit
 FunctionEnd
 
 
-Section EarlyChecks
+Section "$(SecCoreName)" SecCore
+  SectionIn RO
+  ; Empty body on purpose. The actual install work is done by the hidden
+  ; sections "-EarlyChecks" / "-WebView2" / "-Install" below. This labeled
+  ; section exists only so the Components Page shows a clear, greyed-out
+  ; "main product" row alongside the optional CLI row.
+SectionEnd
+
+Section "-EarlyChecks" EarlyChecks
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
   ${If} ${Silent}
@@ -544,7 +564,7 @@ Section EarlyChecks
 
 SectionEnd
 
-Section WebView2
+Section "-WebView2" WebView2
   ; Check if Webview2 is already installed and skip this section
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
@@ -636,7 +656,7 @@ Section WebView2
   ${EndIf}
 SectionEnd
 
-Section Install
+Section "-Install" Install
   SetOutPath $INSTDIR
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
@@ -739,6 +759,23 @@ Section Install
   ${If} $PassiveMode = 1
     SetAutoClose true
   ${EndIf}
+SectionEnd
+
+; ============================================================================
+; CC Start Section: CLI launcher deployment
+; ============================================================================
+; Runs after the hidden `-Install` Section has placed the 5 CLI scripts at
+; $INSTDIR\_up_\_up_\ via the standard Tauri resources channel. This Section
+; copies them to %USERPROFILE%\.local\bin so users get the cc/ccs commands
+; in PATH (PATH injection itself is added in Task 3.x). Target directory is
+; identical to the upstream install.bat, so this acts as an in-place upgrade.
+Section "$(SecCliName)" SecCli
+  CreateDirectory "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc"      "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc.cmd"  "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc.ps1"  "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.cmd" "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.ps1" "$PROFILE\.local\bin"
 SectionEnd
 
 Function .onInstSuccess
