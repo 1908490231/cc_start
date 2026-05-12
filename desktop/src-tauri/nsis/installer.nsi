@@ -778,6 +778,19 @@ Section "$(SecCliName)" SecCli
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.ps1" "$PROFILE\.local\bin"
 SectionEnd
 
+; ============================================================================
+; CC Start Components Page descriptions (bilingual hover text)
+; ============================================================================
+; MUI_FUNCTION_DESCRIPTION_BEGIN/END must appear after every Section declaration
+; because it references Section IDs. Placed here right after SecCli so the block
+; sits at the natural end of the install Sections, just before .onInstSuccess.
+LangString DESC_SecCli ${LANG_SIMPCHINESE} "安装 cc / ccs 命令行启动器，并加入用户 PATH。"
+LangString DESC_SecCli ${LANG_ENGLISH}     "Install the cc / ccs CLI launcher and add it to user PATH."
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecCli} $(DESC_SecCli)
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
+
 Function .onInstSuccess
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
