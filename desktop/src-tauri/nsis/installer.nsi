@@ -50,6 +50,10 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
+; CC Start: WM_SETTINGCHANGE 广播需要 HWND_BROADCAST / WM_SETTINGCHANGE 常量
+; SecCli 在写完 HKCU PATH 后会发广播，让 explorer 等进程刷新环境变量
+!include "WinMessages.nsh"
+
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
 {{/if}}
@@ -797,6 +801,12 @@ Section "$(SecCliName)" SecCli
   ${Else}
     DetailPrint "PATH: EnVar::AddValue failed with code $0"
   ${EndIf}
+
+  ; CC Start: 广播 WM_SETTINGCHANGE 通知 explorer 等进程刷新环境变量
+  ; 注意：只有响应该消息的进程才会刷新（explorer 会，cmd/PowerShell/Git Bash 不会）
+  ; ——这是 Windows 设计，用户必须**新开**终端才能看到新 PATH。
+  ; /TIMEOUT=5000 防止某个无响应窗口卡死安装器；不能用 0（=完全同步无超时）
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 SectionEnd
 
 ; ============================================================================
