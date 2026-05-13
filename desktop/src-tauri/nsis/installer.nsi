@@ -789,17 +789,16 @@ Section "$(SecCliName)" SecCli
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.ps1" "$PROFILE\.local\bin"
 
   ; CC Start: 把 .local\bin 幂等写入 HKCU PATH
-  ; EnVar plugin 自带去重：路径已存在时 Pop 返回 1，不重复添加
-  ; Pop 返回码：0 = 成功且实际改动；1 = 已存在（幂等命中）；其他 = 真错误
+  ; EnVar plugin AddValue 内置去重 + 原子级幂等：
+  ;   Pop=0   = 操作成功（新增 / 已存在不变都返回 0，无法区分这两种）
+  ;   Pop=非0 = 异常（plugin 未定义具体码，统一当错误记录到 details）
   EnVar::SetHKCU
   EnVar::AddValue "PATH" "$PROFILE\.local\bin"
   Pop $0
   ${If} $0 == 0
-    DetailPrint "PATH: added $PROFILE\.local\bin to HKCU"
-  ${ElseIf} $0 == 1
-    DetailPrint "PATH: $PROFILE\.local\bin already present in HKCU (idempotent)"
+    DetailPrint "PATH: $PROFILE\.local\bin processed in HKCU (added or already present)"
   ${Else}
-    DetailPrint "PATH: EnVar::AddValue failed with code $0"
+    DetailPrint "PATH: EnVar::AddValue returned unexpected code $0"
   ${EndIf}
 
   ; CC Start: 广播 WM_SETTINGCHANGE 通知 explorer 等进程刷新环境变量
