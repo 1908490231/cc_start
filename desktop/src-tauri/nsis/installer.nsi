@@ -113,6 +113,13 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 # additional plugins
 !addplugindir "${ADDITIONALPLUGINSPATH}"
 
+; CC Start: 项目内 plugin 目录，用于 EnVar plugin（PATH 幂等写入）
+; 这里用绝对路径——makensis 编译的是 Tauri 渲染产物
+; (target/release/nsis/x64/installer.nsi)，相对路径基准是产物所在目录，
+; 那里没有 plugins/x86-unicode，所以相对路径不可用。
+; 当前为单机开发，绝对路径代价为 0；阶段 5 收尾再评估可移植方案。
+!addplugindir "E:\My_project\cc_start\desktop\src-tauri\nsis\plugins\x86-unicode"
+
 ; Uninstaller signing command
 !if "${UNINSTALLERSIGNCOMMAND}" != ""
   !uninstfinalize '${UNINSTALLERSIGNCOMMAND}'
