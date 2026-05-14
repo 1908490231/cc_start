@@ -875,10 +875,18 @@ FunctionEnd
 ; SectionId（UnSecCli）不带 "." 字符以便 ${UnSecCli} 在 MUI_DESCRIPTION_TEXT 中正常引用。
 ; 本 Task 仅建骨架不写 Delete，Task 4.2 加 5 个 Delete。
 Section "un.$(UnSecCliName)" UnSecCli
-  ; 占位注释：Task 4.2 将在此处加 5 个 Delete "$PROFILE\.local\bin\<name>"
-  ; 严禁加：EnVar::DeleteValue（PRD §3.4 卸载不动 PATH）
-  ; 严禁加：RMDir "$PROFILE\.local\bin"（PRD §3.4 不删目录本身）
-  ; 严禁加：Delete "$PROFILE\.claude\..."（PRD §五约束 4 永不触碰）
+  ; 按 PRD §3.4 固定 5 个文件名删除，不区分原本谁装的
+  ; （同位置覆盖语义下两者本就是同一份）
+  Delete "$PROFILE\.local\bin\cc"
+  Delete "$PROFILE\.local\bin\cc.cmd"
+  Delete "$PROFILE\.local\bin\cc.ps1"
+  Delete "$PROFILE\.local\bin\ccs.cmd"
+  Delete "$PROFILE\.local\bin\ccs.ps1"
+  ; PRD §3.4 三条硬约束：
+  ;   1. 不调用 EnVar::DeleteValue —— 卸载不动 PATH（无法判断条目原本谁加的）
+  ;   2. 不 RMDir "$PROFILE\.local\bin" —— 目录可能服务其他工具
+  ;   3. 不 Delete "$PROFILE\.claude\..." —— PRD §五约束 4 永不触碰用户配置
+  DetailPrint "CLI: removed cc / ccs scripts from $PROFILE\.local\bin (PATH unchanged, directory kept)"
 SectionEnd
 
 Section "un.$(UnSecCoreName)" UnSecCore
