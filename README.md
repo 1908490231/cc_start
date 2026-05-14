@@ -30,6 +30,8 @@ CC Start 让你彻底告别这些折腾：
 
 ## 一分钟安装
 
+> **桌面版用户**：CC Start Desktop 安装包已附带 `cc` / `ccs` 命令行启动器，装一个安装包即可同时拥有 GUI 和命令行。下面的 `install.bat` / `install.sh` 是**只想单独装 CLI、不装 GUI** 时用。
+
 ```bash
 git clone https://github.com/wandanan/cc_start.git && cd cc_start
 
@@ -289,9 +291,7 @@ CC Start 也提供图形界面版本，适合不想记命令、希望可视化�
 
 1. 先安装 Claude Code
 2. 到 [CC Start Desktop Releases](https://github.com/wandanan/cc_start/releases) 页面下载安装包
-3. Windows 用户可任选以下安装包：
-   - **Setup.exe（推荐）**：更适合普通用户，安装体验更直观
-   - **MSI**：适合偏标准化安装场景
+3. Windows 用户下载 **Setup.exe**（NSIS 安装包，已附带 `cc` / `ccs` 命令行启动器）
 4. 安装完成后打开桌面版，即可查看、添加、编辑并启动模型配置
 
 ### 当前版本支持
@@ -344,8 +344,36 @@ desktop/src-tauri/target/release/bundle/
 
 常见产物包括：
 
-- `nsis/`：Setup 安装包（推荐给普通用户）
-- `msi/`：MSI 安装包
+- `nsis/`：Setup 安装包（NSIS，附带 cc / ccs 命令行启动器）
+
+## 卸载与清理
+
+桌面版从 Windows 控制面板"添加/删除程序"卸载。卸载向导会出现两个组件：
+
+- **CC Start 桌面版（必卸）**：不可取消，卸载本体的所有逻辑
+- **同时移除 cc 命令行启动器**：**默认勾选**，按 5 个固定文件名（`cc` / `cc.cmd` / `cc.ps1` / `ccs.cmd` / `ccs.ps1`）从 `%USERPROFILE%\.local\bin\` 删除
+
+卸载器**不会**：
+
+- 修改 PATH 环境变量（`.local\bin` 目录可能服务其他工具，无法判断条目原本是谁加的）
+- 删除 `%USERPROFILE%\.local\bin\` 目录本身（同上）
+- 触碰 `%USERPROFILE%\.claude\` 任何文件（你的模型配置 `~/.claude/models/*.json` 永远保留）
+
+如果你要彻底清理配置，请**手动删除** `%USERPROFILE%\.claude\models\` 目录。
+
+### 老用户 PATH 重复条目自查
+
+如果你既用过仓库根目录的 `install.bat`、又装过桌面版，PATH 中可能有**多条** `%USERPROFILE%\.local\bin` 记录（来自不同时期、不同形式的展开/未展开版本）。这不影响 `cc` 命令使用，但视觉上有点乱。可手动整理：
+
+```powershell
+# 查看当前 HKCU PATH 中 .local\bin 条目数
+($env:Path -split ';' | Select-String '\.local\\bin').Count
+
+# 查看详细位置
+[Environment]::GetEnvironmentVariable("Path", "User")
+```
+
+如果 Count > 1，去"系统属性 → 环境变量 → 用户变量 Path → 编辑"手动删除重复条目，保留任意一条即可。
 
 ## Star History
 
