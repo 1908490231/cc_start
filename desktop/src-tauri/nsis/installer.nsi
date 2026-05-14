@@ -489,6 +489,15 @@ FunctionEnd
 ; 2. Uninstalling Page
 !insertmacro MUI_UNPAGE_INSTFILES
 
+; CC Start: 卸载完成页 —— 一行只读提示告诉用户配置目录保留在哪
+; MUI_FINISHPAGE_TEXT 在卸载页面流声明时作用于 MUI_UNPAGE_FINISH
+; （与安装侧 MUI_FINISHPAGE_TEXT 共享变量名，由声明顺序决定归属——
+; 安装侧未显式 !define MUI_FINISHPAGE_TEXT 所以无冲突）
+; MUI_FINISHPAGE_TEXT_LARGE 让多行长文本展开不被截断
+!define MUI_FINISHPAGE_TEXT "$(UnFinishConfigKeptText)"
+!define MUI_FINISHPAGE_TEXT_LARGE
+!insertmacro MUI_UNPAGE_FINISH
+
 ;Languages
 {{#each languages}}
 !insertmacro MUI_LANGUAGE "{{this}}"
@@ -511,6 +520,10 @@ LangString UnSecCoreName ${LANG_SIMPCHINESE} "CC Start 桌面版（必卸）"
 LangString UnSecCoreName ${LANG_ENGLISH}     "CC Start Desktop (required)"
 LangString UnSecCliName  ${LANG_SIMPCHINESE} "同时移除 cc 命令行启动器"
 LangString UnSecCliName  ${LANG_ENGLISH}     "Also remove the cc CLI launcher"
+
+; CC Start: 卸载完成页正文双语 —— $\r$\n 是 NSIS 字符串内的 CRLF 转义
+LangString UnFinishConfigKeptText ${LANG_SIMPCHINESE} "卸载完成。$\r$\n$\r$\n用户配置保留在 %USERPROFILE%\.claude\models\，如需彻底清理请手动删除。"
+LangString UnFinishConfigKeptText ${LANG_ENGLISH}     "Uninstall complete.$\r$\n$\r$\nUser configurations preserved in %USERPROFILE%\.claude\models\. Manually delete that folder if you want a full cleanup."
 
 Function .onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode
