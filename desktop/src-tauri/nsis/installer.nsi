@@ -478,6 +478,14 @@ FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE un.SkipIfPassive
 !insertmacro MUI_UNPAGE_CONFIRM
 
+; CC Start: 卸载侧组件页 —— 让用户勾"是否同时移除 cc 命令行启动器"
+; 必须在 MUI_UNPAGE_INSTFILES 之前、MUI_LANGUAGE 之前声明
+; MUI_PAGE_CUSTOMFUNCTION_SHOW 紧贴 MUI_UNPAGE_COMPONENTS 之前 define，
+; 让 un.OnUnComponentsShow 在页面渲染前用 SectionSetText 把 Section 显示
+; 文本从字面 "un.xxx" 改写为不带 "un." 的 LangString 内容（NSIS 不自动剥）。
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW un.OnUnComponentsShow
+!insertmacro MUI_UNPAGE_COMPONENTS
+
 ; 2. Uninstalling Page
 !insertmacro MUI_UNPAGE_INSTFILES
 
@@ -497,6 +505,12 @@ LangString SecCoreName ${LANG_SIMPCHINESE} "CC Start 桌面版（必装）"
 LangString SecCoreName ${LANG_ENGLISH}     "CC Start Desktop (required)"
 LangString SecCliName  ${LANG_SIMPCHINESE} "安装命令行启动器（cc 命令）"
 LangString SecCliName  ${LANG_ENGLISH}     "Install CLI launcher (cc command)"
+
+; CC Start: 卸载侧组件页 Section 显示名（双语）
+LangString UnSecCoreName ${LANG_SIMPCHINESE} "CC Start 桌面版（必卸）"
+LangString UnSecCoreName ${LANG_ENGLISH}     "CC Start Desktop (required)"
+LangString UnSecCliName  ${LANG_SIMPCHINESE} "同时移除 cc 命令行启动器"
+LangString UnSecCliName  ${LANG_ENGLISH}     "Also remove the cc CLI launcher"
 
 Function .onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode
@@ -854,7 +868,21 @@ Function un.onInit
   ${EndIf}
 FunctionEnd
 
-Section Uninstall
+; CC Start: 卸载侧 CLI 启动器 Section —— 默认勾选，按 PRD §3.4 实现
+; 放在 un.SecCore 之前，Components Page 显示顺序：CLI（可选） → 必卸核心
+; Section name 必须以 "un." 前缀让 NSIS 识别为卸载侧；显示文本由
+; un.OnUnComponentsShow 用 SectionSetText 改写为不带 "un." 的版本。
+; SectionId（UnSecCli）不带 "." 字符以便 ${UnSecCli} 在 MUI_DESCRIPTION_TEXT 中正常引用。
+; 本 Task 仅建骨架不写 Delete，Task 4.2 加 5 个 Delete。
+Section "un.$(UnSecCliName)" UnSecCli
+  ; 占位注释：Task 4.2 将在此处加 5 个 Delete "$PROFILE\.local\bin\<name>"
+  ; 严禁加：EnVar::DeleteValue（PRD §3.4 卸载不动 PATH）
+  ; 严禁加：RMDir "$PROFILE\.local\bin"（PRD §3.4 不删目录本身）
+  ; 严禁加：Delete "$PROFILE\.claude\..."（PRD §五约束 4 永不触碰）
+SectionEnd
+
+Section "un.$(UnSecCoreName)" UnSecCore
+  SectionIn RO  ; 必卸，不可取消——卸载桌面版本体的所有逻辑都在这个 Section 里
 
   !ifmacrodef NSIS_HOOK_PREUNINSTALL
     !insertmacro NSIS_HOOK_PREUNINSTALL
@@ -974,6 +1002,25 @@ Section Uninstall
     SetAutoClose true
   ${EndIf}
 SectionEnd
+
+; CC Start: 卸载组件页 Show 钩子 —— 把 Section 显示文本从字面 "un.xxx" 改写为
+; 不带 "un." 的 LangString 内容。必须在 UnSecCli / UnSecCore 声明之后定义，
+; 因为 ${UnSecCli} / ${UnSecCore} 是 NSIS 编译期 define 的 section index 常量，
+; 单 pass 编译器要求引用位置在 Section 声明之后。
+Function un.OnUnComponentsShow
+  SectionSetText ${UnSecCli}  "$(UnSecCliName)"
+  SectionSetText ${UnSecCore} "$(UnSecCoreName)"
+FunctionEnd
+
+; CC Start: 卸载侧组件页双语悬停描述。MUI_UNFUNCTION_DESCRIPTION 块必须在
+; UnSecCli / UnSecCore 声明之后（${UnSecCli} 是 section index define，单 pass
+; 编译要求引用位置在 Section 之后）。
+LangString DESC_UnSecCli ${LANG_SIMPCHINESE} "从 %USERPROFILE%\.local\bin\ 移除 cc / ccs 系列脚本。不修改 PATH，不删除目录本身，不触碰 %USERPROFILE%\.claude\。"
+LangString DESC_UnSecCli ${LANG_ENGLISH}     "Remove cc / ccs scripts from %USERPROFILE%\.local\bin\. Does NOT modify PATH, NOT delete the directory, NOT touch %USERPROFILE%\.claude\."
+
+!insertmacro MUI_UNFUNCTION_DESCRIPTION_BEGIN
+  !insertmacro MUI_DESCRIPTION_TEXT ${UnSecCli} $(DESC_UnSecCli)
+!insertmacro MUI_UNFUNCTION_DESCRIPTION_END
 
 Function RestorePreviousInstallLocation
   ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
