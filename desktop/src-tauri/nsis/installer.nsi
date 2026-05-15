@@ -50,9 +50,6 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
-; CC Start: WM_SETTINGCHANGE 广播需要 HWND_BROADCAST / WM_SETTINGCHANGE 常量
-; SecCli 在写完 HKCU PATH 后会发广播，让 explorer 等进程刷新环境变量
-!include "WinMessages.nsh"
 
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
@@ -418,10 +415,6 @@ Var AppStartMenuFolder
 !insertmacro MUI_PAGE_INSTFILES
 
 ; 8. Finish page
-;
-; Don't auto jump to finish page after installation page,
-; because the installation page has useful info that can be used debug any issues with the installer.
-!define MUI_FINISHPAGE_NOAUTOCLOSE
 ; Use show readme button in the finish page as a button create a desktop shortcut
 !define MUI_FINISHPAGE_SHOWREADME
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "$(createDesktop)"
@@ -815,24 +808,24 @@ Section "$(SecCliName)" SecCli
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.cmd" "$PROFILE\.local\bin"
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.ps1" "$PROFILE\.local\bin"
 
-  ; CC Start: 把 .local\bin 幂等写入 HKCU PATH
-  ; EnVar plugin AddValue 内置去重 + 原子级幂等：
-  ;   Pop=0   = 操作成功（新增 / 已存在不变都返回 0，无法区分这两种）
-  ;   Pop=非0 = 异常（plugin 未定义具体码，统一当错误记录到 details）
+  ; CC Start: 把 .local\bin 幂等写入 HKCU Path
+  ; 先清理历史等价项，再用 REG_EXPAND_SZ 保留 %USERPROFILE% 形式。
   EnVar::SetHKCU
-  EnVar::AddValue "PATH" "$PROFILE\.local\bin"
+  EnVar::DeleteValue "Path" "$PROFILE\.local\bin"
+  Pop $0
+  EnVar::DeleteValue "Path" "$PROFILE\.local\bin\"
+  Pop $0
+  EnVar::DeleteValue "Path" "%USERPROFILE%\.local\bin"
+  Pop $0
+  EnVar::DeleteValue "Path" "%USERPROFILE%\.local\bin\"
+  Pop $0
+  EnVar::AddValueEx "Path" "%USERPROFILE%\.local\bin"
   Pop $0
   ${If} $0 == 0
-    DetailPrint "PATH: $PROFILE\.local\bin processed in HKCU (added or already present)"
+    DetailPrint "PATH: %USERPROFILE%\.local\bin processed in HKCU (added or already present)"
   ${Else}
-    DetailPrint "PATH: EnVar::AddValue returned unexpected code $0"
+    DetailPrint "PATH: EnVar::AddValueEx returned unexpected code $0"
   ${EndIf}
-
-  ; CC Start: 广播 WM_SETTINGCHANGE 通知 explorer 等进程刷新环境变量
-  ; 注意：只有响应该消息的进程才会刷新（explorer 会，cmd/PowerShell/Git Bash 不会）
-  ; ——这是 Windows 设计，用户必须**新开**终端才能看到新 PATH。
-  ; /TIMEOUT=5000 防止某个无响应窗口卡死安装器；不能用 0（=完全同步无超时）
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 SectionEnd
 
 ; ============================================================================
