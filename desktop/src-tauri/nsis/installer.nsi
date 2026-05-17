@@ -114,7 +114,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 # additional plugins
 !addplugindir "${ADDITIONALPLUGINSPATH}"
 
-; CC Start: 项目内 plugin 目录，用于 EnVar plugin（PATH 幂等写入）
+; CC Start: 项目内 plugin 目录（EnVar.dll）
+; PATH 写入已改用 PowerShell（SecCli），不再调用 EnVar；plugin dir 暂保留，
+; 等阶段 E 干净 VM 完整回归后再评估是否一并清理。
 ; 这里用绝对路径——makensis 编译的是 Tauri 渲染产物
 ; (target/release/nsis/x64/installer.nsi)，相对路径基准是产物所在目录，
 ; 那里没有 plugins/x86-unicode，所以相对路径不可用。
@@ -809,25 +811,25 @@ Section "$(SecCliName)" SecCli
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.ps1" "$PROFILE\.local\bin"
 
   ; CC Start: 把 .local\bin 幂等写入 HKCU Path
-  ; 用 $PROFILE 让 NSIS 在安装时展开成绝对路径（如 C:\Users\<user>\.local\bin）。
-  ; 不能用 %USERPROFILE% —— EnVar 插件不展开变量、且对含 % 的值会静默失败
-  ; （阶段 5 干净环境实测确认，详见 Plans/调研笔记 与 docs/环境变量问题.md）。
-  ; DeleteValue 阶段同时清理 $PROFILE 与 %USERPROFILE% 两种历史形式，保证幂等。
-  EnVar::SetHKCU
-  EnVar::DeleteValue "Path" "$PROFILE\.local\bin"
-  Pop $0
-  EnVar::DeleteValue "Path" "$PROFILE\.local\bin\"
-  Pop $0
-  EnVar::DeleteValue "Path" "%USERPROFILE%\.local\bin"
-  Pop $0
-  EnVar::DeleteValue "Path" "%USERPROFILE%\.local\bin\"
-  Pop $0
-  EnVar::AddValue "Path" "$PROFILE\.local\bin"
-  Pop $0
+  ;   - 用 PowerShell + [Environment]::SetEnvironmentVariable 而不是 NSIS 原生 WriteRegStr 或
+  ;     EnVar plugin：前者受 NSIS_MAX_STRLEN=1024 限制会截断长 PATH，后者在部分环境下静默失败
+  ;     （AddValue 返回 Pop=0 但 0 字节写入注册表）
+  ;   - .NET API 无长度限制，且会自动广播 WM_SETTINGCHANGE，新开终端能立即感知
+  ;   - $PROFILE 由 NSIS 在安装时展开成绝对路径，写入 .ps1 时已是字面字符串
+  ;   - 与 install.bat 的 PowerShell 调用同语义：先剔重再前置
+  FileOpen $3 "$TEMP\cc-start-add-path.ps1" w
+  FileWrite $3 "$$d = '$PROFILE\.local\bin'$\r$\n"
+  FileWrite $3 "$$p = [Environment]::GetEnvironmentVariable('Path', 'User')$\r$\n"
+  FileWrite $3 "$$clean = $$p -split ';' | Where-Object { $$_ -ne '' -and $$_ -ne $$d }$\r$\n"
+  FileWrite $3 "$$new = (@($$d) + @($$clean)) -join ';'$\r$\n"
+  FileWrite $3 "[Environment]::SetEnvironmentVariable('Path', $$new, 'User')$\r$\n"
+  FileClose $3
+  ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$TEMP\cc-start-add-path.ps1"' $0
+  Delete "$TEMP\cc-start-add-path.ps1"
   ${If} $0 == 0
-    DetailPrint "PATH: $PROFILE\.local\bin processed in HKCU (added or already present)"
+    DetailPrint "PATH: $PROFILE\.local\bin written to HKCU via PowerShell"
   ${Else}
-    DetailPrint "PATH: EnVar::AddValue returned unexpected code $0"
+    DetailPrint "PATH: PowerShell exit code = $0 (写入可能失败)"
   ${EndIf}
 SectionEnd
 
