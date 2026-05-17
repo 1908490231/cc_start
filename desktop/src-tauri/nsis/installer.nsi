@@ -98,6 +98,10 @@ Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
 OutFile "${OUTFILE}"
 
+; CC Start: 【临时诊断】让 details 面板默认展开，方便看 DetailPrint 输出
+; 定位完 EnVar PATH 写入失败根因后删除此行
+ShowInstDetails show
+
 ; We don't actually use this value as default install path,
 ; it's just for nsis to append the product name folder in the directory selector
 ; https://nsis.sourceforge.io/Reference/InstallDir
@@ -809,7 +813,10 @@ Section "$(SecCliName)" SecCli
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.ps1" "$PROFILE\.local\bin"
 
   ; CC Start: 把 .local\bin 幂等写入 HKCU Path
-  ; 先清理历史等价项，再用 REG_EXPAND_SZ 保留 %USERPROFILE% 形式。
+  ; 用 $PROFILE 让 NSIS 在安装时展开成绝对路径（如 C:\Users\<user>\.local\bin）。
+  ; 不能用 %USERPROFILE% —— EnVar 插件不展开变量、且对含 % 的值会静默失败
+  ; （阶段 5 干净环境实测确认，详见 Plans/调研笔记 与 docs/环境变量问题.md）。
+  ; DeleteValue 阶段同时清理 $PROFILE 与 %USERPROFILE% 两种历史形式，保证幂等。
   EnVar::SetHKCU
   EnVar::DeleteValue "Path" "$PROFILE\.local\bin"
   Pop $0
@@ -819,12 +826,18 @@ Section "$(SecCliName)" SecCli
   Pop $0
   EnVar::DeleteValue "Path" "%USERPROFILE%\.local\bin\"
   Pop $0
-  EnVar::AddValueEx "Path" "%USERPROFILE%\.local\bin"
+  EnVar::AddValue "Path" "$PROFILE\.local\bin"
   Pop $0
+  ; CC Start: 【临时诊断】MessageBox 阻塞显示 EnVar Pop 值，绝对错过不了
+  ; 同时读回 HKCU Path 验证是否真的写入。定位完 PATH 写入失败根因后删除此块
+  ReadRegStr $1 HKCU "Environment" "Path"
+  StrLen $2 $1
+  MessageBox MB_OK "DEBUG: EnVar::AddValue Pop = $0$\r$\n$\r$\n0 = 操作成功（新增 或 已存在）$\r$\n其他 = 错误码$\r$\n$\r$\nHKCU Path 总长度: $2 字符$\r$\n(查末尾是否多出 .local\bin)"
+  DetailPrint "DEBUG: HKCU Path = $1"
   ${If} $0 == 0
-    DetailPrint "PATH: %USERPROFILE%\.local\bin processed in HKCU (added or already present)"
+    DetailPrint "PATH: $PROFILE\.local\bin processed in HKCU (added or already present)"
   ${Else}
-    DetailPrint "PATH: EnVar::AddValueEx returned unexpected code $0"
+    DetailPrint "PATH: EnVar::AddValue returned unexpected code $0"
   ${EndIf}
 SectionEnd
 
