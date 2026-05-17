@@ -817,6 +817,7 @@ Section "$(SecCliName)" SecCli
   ;   - .NET API 无长度限制，且会自动广播 WM_SETTINGCHANGE，新开终端能立即感知
   ;   - $PROFILE 由 NSIS 在安装时展开成绝对路径，写入 .ps1 时已是字面字符串
   ;   - 与 install.bat 的 PowerShell 调用同语义：先剔重再前置
+  ;   - 用 nsExec::ExecToLog 而非 ExecWait，隐藏 PowerShell 控制台窗口，PS 输出转写入详细日志
   FileOpen $3 "$TEMP\cc-start-add-path.ps1" w
   FileWrite $3 "$$d = '$PROFILE\.local\bin'$\r$\n"
   FileWrite $3 "$$p = [Environment]::GetEnvironmentVariable('Path', 'User')$\r$\n"
@@ -824,7 +825,8 @@ Section "$(SecCliName)" SecCli
   FileWrite $3 "$$new = (@($$d) + @($$clean)) -join ';'$\r$\n"
   FileWrite $3 "[Environment]::SetEnvironmentVariable('Path', $$new, 'User')$\r$\n"
   FileClose $3
-  ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$TEMP\cc-start-add-path.ps1"' $0
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$TEMP\cc-start-add-path.ps1"'
+  Pop $0
   Delete "$TEMP\cc-start-add-path.ps1"
   ${If} $0 == 0
     DetailPrint "PATH: $PROFILE\.local\bin written to HKCU via PowerShell"
