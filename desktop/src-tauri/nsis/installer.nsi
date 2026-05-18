@@ -803,6 +803,76 @@ SectionEnd
 ; in PATH (PATH injection itself is added in Task 3.x). Target directory is
 ; identical to the upstream install.bat, so this acts as an in-place upgrade.
 Section "$(SecCliName)" SecCli
+  ; ============================================================================
+  ; CC Start: Git Bash 4 层 fallback 预检（与 cc.cmd/ccs.cmd 同步硬编码）
+  ;   层 1: 3 个硬编码常见路径
+  ;   层 2: 注册表 HKCU/HKLM\SOFTWARE\GitForWindows\InstallPath
+  ;         HKLM 必须 SetRegView 64 才能看到 64 位 Git 写入的视图，
+  ;         HKCU 不受 WOW64 重定向影响
+  ;   层 3: where git 推导 <root>\bin\bash.exe
+  ;   层 4: MessageBox 弹窗警告但 NOT Abort（不阻塞安装）
+  ;         cc.cmd 自身仍有同样的 4 层 fallback，运行时再次报错兜底
+  ; ============================================================================
+  StrCpy $1 ""  ; $1 = 检测到的 bash.exe 路径，空 = 未找到
+
+  ; Layer 1: hardcoded common paths
+  ${If} ${FileExists} "D:\IDE\Git\Git\usr\bin\bash.exe"
+    StrCpy $1 "D:\IDE\Git\Git\usr\bin\bash.exe"
+  ${ElseIf} ${FileExists} "C:\Program Files\Git\bin\bash.exe"
+    StrCpy $1 "C:\Program Files\Git\bin\bash.exe"
+  ${ElseIf} ${FileExists} "C:\Program Files (x86)\Git\bin\bash.exe"
+    StrCpy $1 "C:\Program Files (x86)\Git\bin\bash.exe"
+  ${EndIf}
+
+  ; Layer 2 (HKCU)
+  ${If} $1 == ""
+    ReadRegStr $0 HKCU "SOFTWARE\GitForWindows" "InstallPath"
+    ${If} $0 != ""
+    ${AndIf} ${FileExists} "$0\bin\bash.exe"
+      StrCpy $1 "$0\bin\bash.exe"
+    ${EndIf}
+  ${EndIf}
+
+  ; Layer 2 (HKLM, 64-bit view)
+  ${If} $1 == ""
+    SetRegView 64
+    ReadRegStr $0 HKLM "SOFTWARE\GitForWindows" "InstallPath"
+    SetRegView 32
+    ${If} $0 != ""
+    ${AndIf} ${FileExists} "$0\bin\bash.exe"
+      StrCpy $1 "$0\bin\bash.exe"
+    ${EndIf}
+  ${EndIf}
+
+  ; Layer 3: where git -> <root>\bin\bash.exe
+  ${If} $1 == ""
+    nsExec::ExecToStack 'where git'
+    Pop $R0  ; exit code / "error" / "timeout"
+    Pop $R1  ; stdout (multi-line possible, \r\n separated)
+    ${If} $R0 == "0"
+    ${AndIf} $R1 != ""
+      ; Truncate to first line
+      ${StrLoc} $R2 "$R1" "$\r$\n" ">"
+      ${If} $R2 != ""
+        StrCpy $R1 $R1 $R2
+      ${EndIf}
+      ; $R1 should be "<root>\cmd\git.exe", strip 2 parents -> <root>
+      ${GetParent} $R1 $0
+      ${GetParent} $0 $0
+      ${If} ${FileExists} "$0\bin\bash.exe"
+        StrCpy $1 "$0\bin\bash.exe"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+
+  ; Layer 4: not found - warn but continue (don't Abort)
+  ${If} $1 == ""
+    DetailPrint "Git Bash precheck: not detected (CLI deferred, install continues)"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(MsgGitBashNotFound)"
+  ${Else}
+    DetailPrint "Git Bash precheck: $1"
+  ${EndIf}
+
   CreateDirectory "$PROFILE\.local\bin"
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc"      "$PROFILE\.local\bin"
   CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc.cmd"  "$PROFILE\.local\bin"
@@ -843,6 +913,10 @@ SectionEnd
 ; sits at the natural end of the install Sections, just before .onInstSuccess.
 LangString DESC_SecCli ${LANG_SIMPCHINESE} "安装 cc / ccs 命令行启动器，并加入用户 PATH。"
 LangString DESC_SecCli ${LANG_ENGLISH}     "Install the cc / ccs CLI launcher and add it to user PATH."
+
+; CC Start: Git Bash 4 层 fallback 预检失败时的弹窗双语文案
+LangString MsgGitBashNotFound ${LANG_SIMPCHINESE} "未检测到 Git for Windows。$\r$\n$\r$\nCC Start 的 cc / ccs 命令需要 Git Bash 才能运行。$\r$\n$\r$\n安装将继续完成，请稍后从 https://git-scm.com/download/win 安装 Git for Windows，cc 命令才会真正可用。"
+LangString MsgGitBashNotFound ${LANG_ENGLISH}     "Git for Windows is not detected.$\r$\n$\r$\nCC Start cc / ccs commands need Git Bash to run.$\r$\n$\r$\nInstallation will continue. Please install Git for Windows from https://git-scm.com/download/win afterward to enable the cc commands."
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecCli} $(DESC_SecCli)
