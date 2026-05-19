@@ -12,6 +12,8 @@
 
 **一条命令，终结 Claude Code 的上手门槛。多模型，一个工具就够了。**
 
+> 🍴 Forked from [wandanan/cc_start](https://github.com/wandanan/cc_start) · 基于 MIT 协议二次发布
+
 ---
 ![alt text](image.png)
 ## 为什么选择 CC Start？
@@ -33,7 +35,7 @@ CC Start 让你彻底告别这些折腾：
 > **桌面版用户**：CC Start Desktop 安装包已附带 `cc` / `ccs` 命令行启动器，装一个安装包即可同时拥有 GUI 和命令行。下面的 `install.bat` / `install.sh` 是**只想单独装 CLI、不装 GUI** 时用。
 
 ```bash
-git clone https://github.com/wandanan/cc_start.git && cd cc_start
+git clone https://github.com/1908490231/cc_start.git && cd cc_start
 
 # Windows → 双击运行
 install.bat
@@ -264,6 +266,11 @@ claude --settings ~/.claude/models/qwen.json
 
 ## 更新日志
 
+### 2026-05-19 · Fork
+
+- 基于上游 [wandanan/cc_start](https://github.com/wandanan/cc_start) v1.0.0 fork
+- 仓库地址迁移至 [1908490231/cc_start](https://github.com/1908490231/cc_start)
+
 ### 2026-04-28 · v1.0.0
 
 - 发布 CC Start 首个正式版本
@@ -290,7 +297,7 @@ CC Start 也提供图形界面版本，适合不想记命令、希望可视化�
 ### 下载安装
 
 1. 先安装 Claude Code
-2. 到 [CC Start Desktop Releases](https://github.com/wandanan/cc_start/releases) 页面下载安装包
+2. 到 [CC Start Desktop Releases](https://github.com/1908490231/cc_start/releases) 页面下载安装包
 3. Windows 用户下载 **Setup.exe**（NSIS 安装包，已附带 `cc` / `ccs` 命令行启动器）
 4. 安装完成后打开桌面版，即可查看、添加、编辑并启动模型配置
 
@@ -379,7 +386,7 @@ desktop/src-tauri/target/release/bundle/
 
 如果这个项目对你有帮助，请给个 ⭐ Star！
 
-[![Star History Chart](https://api.star-history.com/svg?repos=wandanan/cc_start&type=Date)](https://star-history.com/#wandanan/cc_start&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=1908490231/cc_start&type=Date)](https://star-history.com/#1908490231/cc_start&Date)
 
 ## License
 
@@ -391,4 +398,4 @@ MIT
   <b>如果这个项目对你有帮助，点个 ⭐ Star 就是最大的鼓励！</b>
 </p>
 
-[![Star History Chart](https://api.star-history.com/svg?repos=wandanan/cc_start&type=Date)](https://star-history.com/#wandanan/cc_start&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=1908490231/cc_start&type=Date)](https://star-history.com/#1908490231/cc_start&Date)
