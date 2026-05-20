@@ -435,17 +435,39 @@ struct LaunchParams {
 }
 
 fn find_claude_exe() -> Option<String> {
-    if let Ok(output) = Command::new("where").arg("claude").output() {
-        if output.status.success() {
-            if let Ok(path_str) = String::from_utf8(output.stdout) {
-                let first_line = path_str.lines().next().unwrap_or("").trim().to_string();
-                if !first_line.is_empty() {
-                    return Some(first_line);
+    // 进程内扫描 PATH，替代 `where claude` 子进程
+    // 原因：release 版 cc-start.exe 调用 `Command::new("where").arg("claude").output()`
+    // 会稳定卡 5 秒（dev 版无此问题，内核原因未定位）。纯 Rust 扫描可完全绕过
+    if let Ok(path_var) = env::var("PATH") {
+        let path_ext = env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".to_string());
+        let extensions: Vec<String> = path_ext
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        for dir in path_var.split(';') {
+            if dir.is_empty() {
+                continue;
+            }
+            let dir_path = PathBuf::from(dir);
+
+            // 先尝试不带扩展名（兼容 npm 全局 claude 这种 shell 脚本形态）
+            let base = dir_path.join("claude");
+            if base.is_file() {
+                return Some(base.to_string_lossy().to_string());
+            }
+            // 再按 PATHEXT 顺序尝试带扩展名
+            for ext in &extensions {
+                let with_ext = dir_path.join(format!("claude{}", ext));
+                if with_ext.is_file() {
+                    return Some(with_ext.to_string_lossy().to_string());
                 }
             }
         }
     }
 
+    // fallback: USERPROFILE/.local/bin/claude
     if let Ok(userprofile) = env::var("USERPROFILE") {
         let local_bin = PathBuf::from(userprofile).join(".local").join("bin").join("claude");
         if local_bin.exists() {
