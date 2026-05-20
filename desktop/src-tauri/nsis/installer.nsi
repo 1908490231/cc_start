@@ -809,17 +809,29 @@ Section "$(SecCliName)" SecCli
   ;   层 2: 注册表 HKCU/HKLM\SOFTWARE\GitForWindows\InstallPath
   ;         HKLM 必须 SetRegView 64 才能看到 64 位 Git 写入的视图，
   ;         HKCU 不受 WOW64 重定向影响
-  ;   层 3: where git 推导 <root>\bin\bash.exe
+  ;   层 3: where git 推导 <root>\{usr\bin,bin}\bash.exe
   ;   层 4: MessageBox 弹窗警告但 NOT Abort（不阻塞安装）
   ;         cc.cmd 自身仍有同样的 4 层 fallback，运行时再次报错兜底
+  ;
+  ; 为什么每层都优先 usr\bin\bash.exe（MSYS）再 fallback bin\bash.exe（MINGW64）：
+  ;   MINGW64 bin\bash.exe 启动 Claude Code 时，hook 命令
+  ;   "path\run-hook.cmd session-start" 会被 PowerShell 解析而不是 cmd.exe，
+  ;   触发 SessionStart:startup hook error / UnexpectedToken。MSYS usr\bin\bash.exe
+  ;   不会触发。详见 cc.cmd 注释。预检逻辑必须与 cc.cmd 选 bash 的优先级一致，
+  ;   否则预检日志报"检测到 bin\bash.exe"但实际 cc.cmd 用的是 usr\bin\bash.exe，
+  ;   排障时会有歧义。
   ; ============================================================================
   StrCpy $1 ""  ; $1 = 检测到的 bash.exe 路径，空 = 未找到
 
-  ; Layer 1: hardcoded common paths
+  ; Layer 1: hardcoded common paths (usr\bin first, bin second)
   ${If} ${FileExists} "D:\IDE\Git\Git\usr\bin\bash.exe"
     StrCpy $1 "D:\IDE\Git\Git\usr\bin\bash.exe"
+  ${ElseIf} ${FileExists} "C:\Program Files\Git\usr\bin\bash.exe"
+    StrCpy $1 "C:\Program Files\Git\usr\bin\bash.exe"
   ${ElseIf} ${FileExists} "C:\Program Files\Git\bin\bash.exe"
     StrCpy $1 "C:\Program Files\Git\bin\bash.exe"
+  ${ElseIf} ${FileExists} "C:\Program Files (x86)\Git\usr\bin\bash.exe"
+    StrCpy $1 "C:\Program Files (x86)\Git\usr\bin\bash.exe"
   ${ElseIf} ${FileExists} "C:\Program Files (x86)\Git\bin\bash.exe"
     StrCpy $1 "C:\Program Files (x86)\Git\bin\bash.exe"
   ${EndIf}
@@ -828,8 +840,11 @@ Section "$(SecCliName)" SecCli
   ${If} $1 == ""
     ReadRegStr $0 HKCU "SOFTWARE\GitForWindows" "InstallPath"
     ${If} $0 != ""
-    ${AndIf} ${FileExists} "$0\bin\bash.exe"
-      StrCpy $1 "$0\bin\bash.exe"
+      ${If} ${FileExists} "$0\usr\bin\bash.exe"
+        StrCpy $1 "$0\usr\bin\bash.exe"
+      ${ElseIf} ${FileExists} "$0\bin\bash.exe"
+        StrCpy $1 "$0\bin\bash.exe"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 
@@ -839,12 +854,15 @@ Section "$(SecCliName)" SecCli
     ReadRegStr $0 HKLM "SOFTWARE\GitForWindows" "InstallPath"
     SetRegView 32
     ${If} $0 != ""
-    ${AndIf} ${FileExists} "$0\bin\bash.exe"
-      StrCpy $1 "$0\bin\bash.exe"
+      ${If} ${FileExists} "$0\usr\bin\bash.exe"
+        StrCpy $1 "$0\usr\bin\bash.exe"
+      ${ElseIf} ${FileExists} "$0\bin\bash.exe"
+        StrCpy $1 "$0\bin\bash.exe"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 
-  ; Layer 3: where git -> <root>\bin\bash.exe
+  ; Layer 3: where git -> <root>\{usr\bin,bin}\bash.exe
   ${If} $1 == ""
     nsExec::ExecToStack 'where git'
     Pop $R0  ; exit code / "error" / "timeout"
@@ -859,7 +877,9 @@ Section "$(SecCliName)" SecCli
       ; $R1 should be "<root>\cmd\git.exe", strip 2 parents -> <root>
       ${GetParent} $R1 $0
       ${GetParent} $0 $0
-      ${If} ${FileExists} "$0\bin\bash.exe"
+      ${If} ${FileExists} "$0\usr\bin\bash.exe"
+        StrCpy $1 "$0\usr\bin\bash.exe"
+      ${ElseIf} ${FileExists} "$0\bin\bash.exe"
         StrCpy $1 "$0\bin\bash.exe"
       ${EndIf}
     ${EndIf}
