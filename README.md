@@ -266,6 +266,15 @@ claude --settings ~/.claude/models/qwen.json
 
 ## 更新日志
 
+### 2026-05-21 · 修复
+
+- 修复 Windows 下 `cc <model>` 启动后报 `SessionStart:startup hook error / UnexpectedToken session-start` 的问题
+- 根因：cc.cmd / ccs.cmd 4 层 fallback 自动发现 Git 时只选 MINGW64 `bin\bash.exe`，导致 Claude Code 内部 spawn 的 hook 命令被 PowerShell 解析失败
+- 修复：每层 fallback 全部改为优先 MSYS `usr\bin\bash.exe`，再 fallback `bin\bash.exe`
+- 同步更新桌面版 NSIS 安装包的 SecCli 预检逻辑（与 cc.cmd 保持一致）
+- 升级方法：CLI 用户重新跑 `install.bat`；桌面版用户重装最新安装包并勾选"安装命令行启动器"
+- 详见后文"故障排查"小节
+
 ### 2026-05-19 · Fork
 
 - 基于上游 [wandanan/cc_start](https://github.com/wandanan/cc_start) v1.0.0 fork
@@ -381,6 +390,29 @@ desktop/src-tauri/target/release/bundle/
 ```
 
 如果 Count > 1，去"系统属性 → 环境变量 → 用户变量 Path → 编辑"手动删除重复条目，保留任意一条即可。
+
+## 故障排查
+
+### Windows：`cc <model>` 启动后报 SessionStart hook 错
+
+**现象**：cmd.exe 里跑 `cc kimi` / `cc mini` 等命令，Claude Code 启动后顶部出现：
+
+```
+SessionStart:startup hook error
+Failed with non-blocking status code
+UnexpectedToken session-start
+```
+
+模型本身能用，但 Superpowers / 插件类 hook 注入功能可能失效。
+
+**原因**：旧版 cc.cmd / ccs.cmd 在某些 Git 安装环境下选到了 MINGW64 `bin\bash.exe`。这个 bash 启动 Claude Code 后，Claude Code 内部 spawn 的 hook 命令 `"path\run-hook.cmd session-start"` 会被 PowerShell 解析，而 PowerShell 不能直接执行带参数的 `.cmd` 路径（需要 `&` 前缀），所以报 `UnexpectedToken`。MSYS `usr\bin\bash.exe` 不会触发。
+
+**解决**：升级到 2026-05-21 之后版本。新版 cc.cmd / ccs.cmd 4 层 fallback 已改为优先 MSYS `usr\bin\bash.exe`。
+
+- **CLI 单装**：在仓库根目录重新跑 `install.bat`
+- **桌面版用户**：到 [Releases](https://github.com/1908490231/cc_start/releases) 下载最新版安装包，安装时勾选"安装命令行启动器（cc 命令）"
+
+升级后旧 cc.cmd / ccs.cmd 会被覆盖，下次启动 Claude Code 不会再报这个错。
 
 ## Star History
 
