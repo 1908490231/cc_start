@@ -12,27 +12,24 @@
 
 **一条命令，终结 Claude Code 的上手门槛。多模型，一个工具就够了。**
 
-> 🍴 Forked from [wandanan/cc_start](https://github.com/wandanan/cc_start) · 基于 MIT 协议二次发布
-
----
-![alt text](image.png)
-## 为什么选择 CC Start？
-
-Claude Code 默认只认 Anthropic 自家模型——想用国产大模型？环境变量、配置文件、每个窗口各自为战，稍不留神全面冲突。
-
-CC Start 让你彻底告别这些折腾：
-
-| | |
-|---|---|
-| 🚀 **一条命令装好一切** | 自动检测 & 安装 Node.js、Claude Code，脚本直达 PATH，安装即用，零手动 |
-| 🎯 **多模型无缝切换** | `cc kimi` → `cc qwen` → `cc glm` — 一条命令换模型，比切歌还流畅 |
-| 🪟 **多窗口独立运行** | 每个终端独立配置互不干扰，4 个窗口跑 4 个模型，随心所欲 |
-| ➕ **任意模型随心加** | `cc add` 三步上手，兼容任何 Claude API 服务，不挑品牌不限数量 |
-| 🌍 **全平台统一体验** | Windows / macOS / Linux 通吃，CMD、PowerShell、Bash 全支持 |
+![CC Start 多终端启动示例](assets/cc-start-desktop.png)
 
 ## 一分钟安装
 
-> **桌面版用户**：CC Start Desktop 安装包已附带 `cc` / `ccs` 命令行启动器，装一个安装包即可同时拥有 GUI 和命令行。下面的 `install.bat` / `install.sh` 是**只想单独装 CLI、不装 GUI** 时用。
+### 桌面端（推荐 Windows 用户）
+
+桌面端安装包已附带 `cc` / `ccs` 命令行启动器，装一个安装包即可同时拥有 GUI 和命令行。
+
+1. 打开 [GitHub Releases](https://github.com/1908490231/cc_start/releases)
+2. 下载最新版本中的 `CC Start_*_x64-setup.exe`
+3. 双击安装包并按提示完成安装
+4. 打开 CC Start 桌面端，添加模型配置后即可启动 Claude Code
+
+> CC Start Desktop 是 Claude Code 的图形启动器，不是独立 AI 客户端。首次使用前请确保本机已安装 Claude Code；如果未安装，CLI 安装脚本会自动检测并安装。
+
+### CLI 单独安装
+
+如果只想安装命令行版，不需要桌面 GUI，可以使用仓库根目录的安装脚本。
 
 ```bash
 git clone https://github.com/1908490231/cc_start.git && cd cc_start
@@ -46,7 +43,7 @@ chmod +x install.sh && ./install.sh
 
 安装脚本自动完成：
 
-```
+```text
 ✅ 检测 & 自动安装 Node.js / Claude Code（缺失时）
 ✅ 复制启动脚本到系统 PATH
 ✅ 创建配置目录，预置模型配置模板
@@ -54,14 +51,23 @@ chmod +x install.sh && ./install.sh
 ✅ Windows 自动配置 PATH，无需手动操作
 ```
 
-> **macOS 用户注意**：系统自带 bash 版本为 3.2，不支持关联数组。请先通过 Homebrew 安装新版 bash：
-> ```bash
-> brew install bash
-> ```
-> Linux 用户无需此步骤，系统自带 bash 4.0+ 已满足要求。
+> **macOS 用户注意**：系统自带 bash 版本为 3.2，不支持关联数组。请先通过 Homebrew 安装新版 bash：`brew install bash`
+>
+> **安装后提示命令找不到？** Windows 安装程序会自动添加 PATH，但如果失效请手动添加：`系统属性 → 环境变量 → 编辑用户 PATH → 新建 → %USERPROFILE%\.local\bin`
 
-> **安装后提示命令找不到？** Windows 安装程序会自动添加 PATH，但如果失效请手动添加：
-> `系统属性 → 环境变量 → 编辑用户 PATH → 新建 → %USERPROFILE%\.local\bin`
+## 为什么选择 CC Start？
+
+Claude Code 默认只认 Anthropic 自家模型——想用国产大模型？环境变量、配置文件、每个窗口各自为战，稍不留神全面冲突。
+
+CC Start 让你彻底告别这些折腾：
+
+| | |
+|---|---|
+| 🚀 **一条命令装好一切** | 自动检测 & 安装 Node.js、Claude Code，脚本直达 PATH，安装即用，零手动 |
+| 🎯 **多模型无缝切换** | `cc kimi` → `cc qwen` → `cc glm` — 一条命令换模型，比切歌还流畅 |
+| 🪟 **多窗口独立运行** | 每个终端独立配置互不干扰，4 个窗口跑 4 个模型，随心所欲 |
+| ➕ **任意模型随心加** | `cc add` 三步上手，兼容任何 Claude API 服务，不挑品牌不限数量 |
+| 🌍 **全平台统一体验** | Windows / macOS / Linux 通吃，CMD、PowerShell、Bash 全支持 |
 
 ## 快速开始
 
