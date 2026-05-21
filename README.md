@@ -65,11 +65,11 @@ chmod +x install.sh && ./install.sh
 
 ## 快速开始
 
-安装完成后，先添加模型配置，然后就能用了：
+安装完成后会得到 4 个预置模型模板（`kimi` / `qwen` / `glm` / `mini`），位于 `~/.claude/models/`。每个模板的 `ANTHROPIC_AUTH_TOKEN` 是占位符，**先填上自己的 API Key 才能启动**：
 
 ```bash
-# 添加模型配置
-cc add
+# 给某个预置模型填 API Key（编辑器里改 ANTHROPIC_AUTH_TOKEN 即可）
+cc edit kimi
 
 # 交互式选择模型启动
 cc
@@ -77,28 +77,35 @@ cc
 # 或直接指定模型
 cc kimi
 cc qwen
+
+# 添加自己的模型配置
+cc add
 ```
 
 ```bash
 $ cc
 
-╔════════════════════════════════════╗
-║     Claude Code 模型选择器         ║
-╚════════════════════════════════════╝
+╔═══════════════════════════════════╗
+║     请选择模型                    ║
+╚═══════════════════════════════════╝
 
-  1) kimi        - Kimi K2.5
-  2) qwen        - 千问 3.5 Plus
-  3) glm         - GLM 5
-  4) mini        - MiniMax M2.5
+  1)  glm            glm-5
+  2)  kimi           kimi-k2.5
+  3)  mini           MiniMax-M2.5
+  4)  qwen           qwen3.5-plus
 
-请选择模型 (输入编号或名称): 2
+  q)  退出
+  a)  添加新模型
+  h)  查看帮助
+
+  请输入编号或名称 (q=退出 a=添加 h=帮助): 2
 
 请选择启动模式 (↑↓选择, 回车确认):
 
   ▶ 1. 普通启动
     2. dangerously-skip-permissions 启动
 
-🚀 启动 Claude Code [千问 3.5 Plus]...
+🚀 启动 Claude Code [kimi]...
 ```
 
 ## 命令详解
@@ -112,6 +119,7 @@ $ cc
 | `cc remove [模型名]` | 删除模型配置 |
 | `cc ls` | 列出所有已配置模型 |
 | `cc sync [模型名]` | 同步当前 MCP/插件配置到指定模型 |
+| `cc upgrade` | 升级 DeepSeek 系列配置补齐扩展字段（`[1m]` 后缀、AUTO_COMPACT_WINDOW、EFFORT_LEVEL、SUBAGENT_MODEL） |
 | `cc reset` | 清空所有模型配置 |
 | `cc -h` | 查看帮助 |
 
@@ -142,25 +150,18 @@ $ cc
 
 ## 添加你自己的模型
 
-`cc add` 支持添加任意兼容 Claude API 的模型，只需提供：
+`cc add` 支持添加任意兼容 Claude API 的模型。按提示依次输入即可：
 
-- **启动命令名称**（如 `deepseek`，之后用 `cc deepseek` 启动）
-- **模型 ID**（如 `deepseek-v3`）
-- **API Key**
-- **Base URL**（API 端点地址）
+- **启动命令名称**：如 `deepseek`，之后用 `cc deepseek` 或 `ccs deepseek` 启动
+- **模型 ID**：如 `deepseek-v3`
+- **API Key**：输入时不回显，保护隐私
+- **Base URL**：API 端点地址，如 `https://api.deepseek.com/anthropic`
 
 ```bash
 cc add
-# 按提示依次输入上述信息即可
 ```
 
-按提示输入：
-- **启动命令名称**：如 `kimi`（之后用 `cc kimi` 或 `ccs kimi` 启动）
-- **模型 ID**：如 `kimi-k2.5`
-- **API Key**：你的 API 密钥（输入时不会回显，保护隐私）
-- **Base URL**：API 地址，如 `https://api.kimi.com/coding/`
-
-重复 `cc add` 或 `ccs add` 可添加多个模型。
+重复 `cc add` 可添加多个模型。
 
 ### 删除模型
 
@@ -215,12 +216,13 @@ cc glm
 方案 A - 复制到系统目录：
 ```bash
 mkdir -p ~/.local/bin
-cp cc ~/.local/bin/cc                        # Mac/Linux
-cp cc.cmd ~/.local/bin/cc.cmd               # Windows
-cp cc ~/.local/bin/ccs                       # Mac/Linux（或建软链接）
-cp ccs.cmd ~/.local/bin/ccs.cmd             # Windows
-# Mac/Linux 推荐用软链接代替复制，ccs 自动指向 cc
+
+# Mac / Linux：cc 是 bash 脚本，ccs 用软链接指向 cc 即可
+cp cc ~/.local/bin/cc
 ln -sf ~/.local/bin/cc ~/.local/bin/ccs
+
+# Windows（在 Git Bash 里跑）：CMD 用 .cmd，PowerShell 用 .ps1
+cp cc cc.cmd cc.ps1 ccs.cmd ccs.ps1 ~/.local/bin/
 ```
 
 方案 B - 直接把本项目目录加入 PATH：
