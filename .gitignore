@@ -1,6 +1,6 @@
-# 用户模型配置文件（包含 API Key，不要提交）
-models/*.json
-!models/example-*.json
+# 仓库根目录的 models/ 是模板源（占位 Key），允许入库。
+# 真实的用户配置写到 ~/.claude/models/，不在仓库内，天然不受版本控制管。
+# 警告：开发本仓库时切勿把真实 API Key 填进 models/*.json 后提交。
 
 # 备份文件
 *.backup
