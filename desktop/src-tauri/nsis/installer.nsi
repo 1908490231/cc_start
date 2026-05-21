@@ -894,11 +894,11 @@ Section "$(SecCliName)" SecCli
   ${EndIf}
 
   CreateDirectory "$PROFILE\.local\bin"
-  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc"      "$PROFILE\.local\bin"
-  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc.cmd"  "$PROFILE\.local\bin"
-  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cc.ps1"  "$PROFILE\.local\bin"
-  CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.cmd" "$PROFILE\.local\bin"
-  CopyFiles /SILENT "$INSTDIR\_up_\_up_\ccs.ps1" "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cli\cc"      "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cli\cc.cmd"  "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cli\cc.ps1"  "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cli\ccs.cmd" "$PROFILE\.local\bin"
+  CopyFiles /SILENT "$INSTDIR\_up_\_up_\cli\ccs.ps1" "$PROFILE\.local\bin"
 
   ; CC Start: 把 .local\bin 幂等写入 HKCU Path
   ;   - 用 PowerShell + [Environment]::SetEnvironmentVariable 而不是 NSIS 原生 WriteRegStr 或

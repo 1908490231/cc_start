@@ -25,6 +25,8 @@
 3. 双击安装包并按提示完成安装
 4. 打开 CC Start 桌面端，添加模型配置后即可启动 Claude Code
 
+> Windows 可能会提示“Windows 已保护你的电脑 / 发布者未知”。这是因为当前安装包还没有代码签名，且从 GitHub 下载的文件会触发 SmartScreen 检查；如确认来源是本项目 Release 页面，可点击“更多信息” -> “仍要运行”。Release 页面里的 `Source code (zip)` / `Source code (tar.gz)` 是 GitHub 自动生成的源码压缩包，普通用户安装桌面端只需要下载 `.exe` 安装包。
+>
 > CC Start Desktop 是 Claude Code 的图形启动器，不是独立 AI 客户端。首次使用前请确保本机已安装 Claude Code；如果未安装，CLI 安装脚本会自动检测并安装。
 
 ### CLI 单独安装
@@ -320,6 +322,8 @@ CC Start 也提供图形界面版本，适合不想记命令、希望可视化�
 2. 到 [CC Start Desktop Releases](https://github.com/1908490231/cc_start/releases) 页面下载安装包
 3. Windows 用户下载 **Setup.exe**（NSIS 安装包，已附带 `cc` / `ccs` 命令行启动器）
 4. 安装完成后打开桌面版，即可查看、添加、编辑并启动模型配置
+
+> Windows 可能会提示“Windows 已保护你的电脑 / 发布者未知”。这是因为当前安装包还没有代码签名，且从 GitHub 下载的文件会触发 SmartScreen 检查；如确认来源是本项目 Release 页面，可点击“更多信息” -> “仍要运行”。
 
 ### 当前版本支持
 

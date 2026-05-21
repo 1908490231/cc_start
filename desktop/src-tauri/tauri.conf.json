@@ -27,11 +27,11 @@
     "active": true,
     "targets": ["nsis"],
     "resources": [
-      "../../cc",
-      "../../cc.cmd",
-      "../../cc.ps1",
-      "../../ccs.cmd",
-      "../../ccs.ps1"
+      "../../cli/cc",
+      "../../cli/cc.cmd",
+      "../../cli/cc.ps1",
+      "../../cli/ccs.cmd",
+      "../../cli/ccs.ps1"
     ],
     "icon": [
       "icons/32x32.png",
