@@ -68,8 +68,10 @@ if "%SKIP_SCRIPTS%"=="1" (
         exit /b 1
     )
     copy /Y "%~dp0cc.cmd" "%INSTALL_DIR%\cc.cmd" >nul
+    copy /Y "%~dp0cc.ps1" "%INSTALL_DIR%\cc.ps1" >nul
     copy /Y "%~dp0cc" "%INSTALL_DIR%\ccs" >nul
     copy /Y "%~dp0ccs.cmd" "%INSTALL_DIR%\ccs.cmd" >nul
+    copy /Y "%~dp0ccs.ps1" "%INSTALL_DIR%\ccs.ps1" >nul
     copy /Y "%~dp0init.ps1" "%INSTALL_DIR%\init.ps1" >nul
     echo [OK] Scripts installed
     echo [OK] Commands available: cc and ccs
