@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `cc_start` 是一个 Claude Code 多模型启动器，分为两部分：
 
-- 仓库根目录的 CLI 启动器：`cc`、`cc.cmd`、`ccs.cmd`、`install.sh`、`install.bat`
+- 仓库根目录的安装入口：`install.bat`、`install.sh`
+- `cli/` 下的 CLI 启动器源码：`cc`、`cc.cmd`、`cc.ps1`、`ccs.cmd`、`ccs.ps1`、`init.ps1`
 - `desktop/` 下的桌面版：基于 Tauri 2 + 原生 HTML/CSS/JavaScript 的 Windows GUI
 
 核心模型配置统一存放在 `~/.claude/models/*.json`。CLI 和桌面版共享这批配置文件；桌面版不是独立配置系统，而是这些 JSON 的可视化编辑器和启动器。
@@ -23,9 +24,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 运行安装脚本（Windows）：`./install.bat`
 - 运行安装脚本（macOS/Linux）：`chmod +x install.sh && ./install.sh`
-- 直接运行 CLI：`./cc`
-- 指定模型启动：`./cc kimi`
-- 交互式添加模型：`./cc add`
+- 直接运行 CLI（开发自测）：`./cli/cc`
+- 指定模型启动：`./cli/cc kimi`
+- 交互式添加模型：`./cli/cc add`
 
 ### 桌面版（`desktop/`）
 
@@ -142,7 +143,7 @@ Tauri 配置在 `desktop/src-tauri/tauri.conf.json`，前端静态资源目录�
 
 ### 6. CLI 侧实现特点
 
-根目录 `cc` 是 Bash 启动器，`ccs` 在安装时由脚本创建或复制。它会扫描 `~/.claude/models/*.json` 作为可选模型来源，而不是维护单独注册表。
+`cli/cc` 是 Bash 启动器，`ccs` 在安装时由脚本创建或复制。它会扫描 `~/.claude/models/*.json` 作为可选模型来源，而不是维护单独注册表。
 
 这也是为什么 `.gitignore` 只忽略仓库内 `models/*.json` 模板，而真正用户数据在 `~/.claude/models/`。修改 CLI 时，优先保持“扫描配置目录即得模型列表”的机制。
 
@@ -153,6 +154,14 @@ Tauri 配置在 `desktop/src-tauri/tauri.conf.json`，前端静态资源目录�
 - `README.md` 中桌面版开发命令是事实来源：`cd desktop && npm install && npm run tauri dev`
 - `.gitignore` 当前忽略 `PRD/`、`Plans/`、`docs/`，这些文档在本地有价值，但默认不会进入版本控制
 - 仓库当前没有 Cursor rules、`.cursorrules` 或 `.github/copilot-instructions.md`，不需要额外继承这些规则
+
+## 发布与版本管理
+
+- 历史更新记录写在 `README.md` 的“更新日志”小节，不单独维护 `CHANGELOG.md`
+- 桌面端安装包通过 GitHub Releases 发布，不提交到 Git 仓库
+- 每次正式发布前，先更新 `desktop/src-tauri/tauri.conf.json` 的 `version`
+- GitHub Release 标签使用相同版本号并加 `v` 前缀，例如 `v1.0.0`
+- 常用版本号规则：`1.0.1` 表示 bug 修复或小改动，`1.1.0` 表示兼容性新增功能，`2.0.0` 表示不兼容旧版本的重大变化
 
 ## 已知坑位
 

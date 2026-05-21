@@ -224,17 +224,17 @@ cc glm
 mkdir -p ~/.local/bin
 
 # Mac / Linux：cc 是 bash 脚本，ccs 用软链接指向 cc 即可
-cp cc ~/.local/bin/cc
+cp cli/cc ~/.local/bin/cc
 ln -sf ~/.local/bin/cc ~/.local/bin/ccs
 
 # Windows（在 Git Bash 里跑）：CMD 用 .cmd，PowerShell 用 .ps1
-cp cc cc.cmd cc.ps1 ccs.cmd ccs.ps1 ~/.local/bin/
+cp cli/cc cli/cc.cmd cli/cc.ps1 cli/ccs.cmd cli/ccs.ps1 ~/.local/bin/
 ```
 
-方案 B - 直接把本项目目录加入 PATH：
+方案 B - 直接把本项目 cli 目录加入 PATH：
 ```bash
 # 编辑 ~/.bashrc 或 ~/.zshrc，添加
-export PATH="$PATH:/path/to/cc_start"
+export PATH="$PATH:/path/to/cc_start/cli"
 ```
 
 **Step 2: 复制模型配置到 Claude 配置目录**
@@ -276,6 +276,9 @@ claude --settings ~/.claude/models/qwen.json
 
 ### 2026-05-21 · 修复
 
+- 发布 CC Start 桌面端 Windows 安装包
+- 桌面端安装包内置 `cc` / `ccs` 命令行启动器
+- 支持通过 GitHub Releases 下载桌面端安装包
 - 修复 Windows 下 `cc <model>` 启动后报 `SessionStart:startup hook error / UnexpectedToken session-start` 的问题
 - 根因：cc.cmd / ccs.cmd 4 层 fallback 自动发现 Git 时只选 MINGW64 `bin\bash.exe`，导致 Claude Code 内部 spawn 的 hook 命令被 PowerShell 解析失败
 - 修复：每层 fallback 全部改为优先 MSYS `usr\bin\bash.exe`，再 fallback `bin\bash.exe`

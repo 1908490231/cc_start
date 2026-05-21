@@ -182,7 +182,7 @@ if [[ -f "$INSTALL_DIR/cc" ]]; then
 fi
 
 if [[ "$SKIP_SCRIPTS" == "0" ]]; then
-    cp "$SCRIPT_DIR/cc" "$INSTALL_DIR/cc"
+    cp "$SCRIPT_DIR/cli/cc" "$INSTALL_DIR/cc"
     chmod +x "$INSTALL_DIR/cc"
     sed -i 's/\r$//' "$INSTALL_DIR/cc"
     ln -sf "$INSTALL_DIR/cc" "$INSTALL_DIR/ccs"

@@ -3,7 +3,7 @@
     CC Start PowerShell 会话初始化脚本
 .DESCRIPTION
     在当前 PowerShell 会话中注册 cc 和 ccs 命令，无需全局安装即可使用。
-    运行方式：. .\init.ps1
+    运行方式：. .\cli\init.ps1
     注意：点 sourcing（. 前缀）是必需的，否则函数不会在父会话中生效。
 #>
 
@@ -47,6 +47,6 @@ Write-Host "  cc add          Add new model config"
 Write-Host "  cc ls           List all models"
 Write-Host ""
 Write-Host "Note: This is session-only." -ForegroundColor Yellow
-Write-Host "      New windows need to re-run: . .\init.ps1" -ForegroundColor Yellow
+Write-Host "      New windows need to re-run: . .\cli\init.ps1" -ForegroundColor Yellow
 Write-Host "      Or run .\install.bat for global installation." -ForegroundColor Yellow
 Write-Host ""
