@@ -12,6 +12,10 @@
 
 **一条命令，终结 Claude Code 的上手门槛。多模型，一个工具就够了。**
 
+CC Start 是一个面向 Claude Code 的多模型启动器，用来统一管理不同模型的 API Key、Base URL 和启动配置。你可以通过 `cc` / `ccs` 命令快速切换模型，也可以使用 Windows 桌面端可视化管理配置并一键启动。
+
+它适合想在 Claude Code 中使用 Kimi、Qwen、GLM、MiniMax 或其他兼容 Claude API 服务的用户。
+
 ![CC Start 多终端启动示例](assets/cc-start-desktop.png)
 
 ## 一分钟安装
@@ -21,7 +25,7 @@
 桌面端安装包已附带 `cc` / `ccs` 命令行启动器，装一个安装包即可同时拥有 GUI 和命令行。
 
 1. 打开 [GitHub Releases](https://github.com/1908490231/cc_start/releases)
-2. 下载最新版本中的 `CC Start_*_x64-setup.exe`
+2. 下载最新版本中的 `CC-Start_*_x64-setup.exe`
 3. 双击安装包并按提示完成安装
 4. 打开 CC Start 桌面端，添加模型配置后即可启动 Claude Code
 
