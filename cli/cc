@@ -1020,21 +1020,15 @@ launch_claude() {
     fi
     echo ""
 
-    # 创建合并的 settings 临时文件（全局 settings 非 env 部分 + 本模型的 API 凭证）
-    # 避免全局 settings.json 的 env 块（如 mimo 凭证）覆盖选中模型的配置
-    local merged_settings
-    merged_settings="$(create_merged_settings "$model_config")"
-    trap 'rm -f "$merged_settings"' EXIT
-
-    # 使用 --settings 参数指定合并后的配置文件
+    # 直接使用模型配置文件作为 --settings，与桌面端行为保持一致
+    # 不再与全局 ~/.claude/settings.json 做合并，每个模型 JSON 自包含 MCP/hooks 等配置
     # 将 CLAUDE_BIN 拆分为数组，支持 npx 等多词命令
     read -ra CLAUDE_CMD <<< "$CLAUDE_BIN"
     if [[ $selected -eq 1 ]]; then
-        "${CLAUDE_CMD[@]}" --dangerously-skip-permissions --settings "$merged_settings" "$@"
+        "${CLAUDE_CMD[@]}" --dangerously-skip-permissions --settings "$model_config" "$@"
     else
-        "${CLAUDE_CMD[@]}" --settings "$merged_settings" "$@"
+        "${CLAUDE_CMD[@]}" --settings "$model_config" "$@"
     fi
-    rm -f "$merged_settings"
 }
 
 # ─── 帮助 ────────────────────────────────────────────────────
