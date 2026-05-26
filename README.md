@@ -433,6 +433,8 @@ UnexpectedToken session-start
 
 升级后旧 cc.cmd / ccs.cmd 会被覆盖，下次启动 Claude Code 不会再报这个错。
 
+认可[linux.do](https://linux.do)。
+
 ## Star History
 
 如果这个项目对你有帮助，请给个 ⭐ Star！
