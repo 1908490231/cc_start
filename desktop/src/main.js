@@ -24,8 +24,15 @@ const settingsPage = document.getElementById('settings-page');
 const settingsContent = document.getElementById('settings-content');
 const backBtn = document.getElementById('back-btn');
 const settingsBackBtn = document.getElementById('settings-back-btn');
+const commonConfigPage = document.getElementById('common-config-page');
+const commonConfigContent = document.getElementById('common-config-content');
+const commonConfigBackBtn = document.getElementById('common-config-back-btn');
 const toast = document.getElementById('toast');
 const container = document.querySelector('.container');
+
+// 通用配置临时状态：仅在当前会话内存在，不持久化到偏好文件
+let currentCommonConfigText = '{}';
+let returnToDetailAfterCommonEdit = false;
 
 function showToast(msg, duration = 3000) {
   toast.textContent = msg;
@@ -304,6 +311,8 @@ function openEditForModel(model) {
     _authMode: model.auth_mode || 'AUTH_TOKEN',
     _isNew: false,
     _originalJson: originalJson,
+    _importCommonEnabled: false,
+    _preImportSnapshot: null,
     haiku_model: model.haiku_model || '',
     opus_model: model.opus_model || '',
     sonnet_model: model.sonnet_model || ''
@@ -585,29 +594,29 @@ function buildWrappedLineNumbers(text, editor) {
   return visualRows.join('\n');
 }
 
-function isConfigWrapEnabled() {
-  const wrapToggle = document.getElementById('detail-config-wrap-toggle');
+function isConfigWrapEnabled(prefix = 'detail-config') {
+  const wrapToggle = document.getElementById(`${prefix}-wrap-toggle`);
   return Boolean(wrapToggle?.checked);
 }
 
-function syncConfigWrapMode() {
-  const shell = document.querySelector('.config-editor-shell');
-  const editor = document.getElementById('detail-config-editor');
+function syncConfigWrapMode(prefix = 'detail-config') {
+  const editor = document.getElementById(`${prefix}-editor`);
+  const shell = editor?.closest('.config-editor-shell');
   if (!shell || !editor) return false;
 
-  const wrapEnabled = isConfigWrapEnabled();
+  const wrapEnabled = isConfigWrapEnabled(prefix);
   shell.classList.toggle('wrap-enabled', wrapEnabled);
   editor.wrap = wrapEnabled ? 'soft' : 'off';
   return wrapEnabled;
 }
 
-function syncConfigEditorLayout() {
-  const editor = document.getElementById('detail-config-editor');
-  const lineNumbers = document.getElementById('detail-config-lines');
-  const highlight = document.getElementById('detail-config-highlight');
+function syncConfigEditorLayout(prefix = 'detail-config') {
+  const editor = document.getElementById(`${prefix}-editor`);
+  const lineNumbers = document.getElementById(`${prefix}-lines`);
+  const highlight = document.getElementById(`${prefix}-highlight`);
   if (!editor || !lineNumbers || !highlight) return;
 
-  const wrapEnabled = syncConfigWrapMode();
+  const wrapEnabled = syncConfigWrapMode(prefix);
   const text = editor.value || '';
   const lineCount = Math.max(1, text.split('\n').length);
   lineNumbers.textContent = wrapEnabled
@@ -636,8 +645,8 @@ function syncConfigEditorLayout() {
   lineNumbers.scrollTop = editor.scrollTop;
 }
 
-function setConfigEditorText(text) {
-  const editor = document.getElementById('detail-config-editor');
+function setConfigEditorText(text, prefix = 'detail-config') {
+  const editor = document.getElementById(`${prefix}-editor`);
   if (!editor) return;
 
   if (editor.value !== text) {
@@ -645,7 +654,7 @@ function setConfigEditorText(text) {
   }
 
   requestAnimationFrame(() => {
-    syncConfigEditorLayout();
+    syncConfigEditorLayout(prefix);
   });
 }
 
@@ -722,7 +731,11 @@ function renderDetailForm() {
     <div class="form-group">
       <div class="config-header-row">
         <label class="form-label">原始配置</label>
-        <label class="config-wrap-toggle"><input type="checkbox" id="detail-config-wrap-toggle"> 自动换行</label>
+        <div class="config-header-actions">
+          <button type="button" class="config-header-link" id="detail-edit-common-btn">编辑通用配置</button>
+          <label class="config-wrap-toggle"><input type="checkbox" id="detail-import-common-toggle"> 导入通用配置</label>
+          <label class="config-wrap-toggle"><input type="checkbox" id="detail-config-wrap-toggle"> 自动换行</label>
+        </div>
       </div>
       <div class="config-editor-shell">
         <div class="config-line-numbers" id="detail-config-lines">1</div>
@@ -754,12 +767,20 @@ function renderDetailForm() {
   requestAnimationFrame(() => {
     syncConfigEditorLayout();
   });
+
+  // 切回详情页时，若该模型上次在导入预览态，恢复 UI 并重新合并最新通用配置
+  const importToggle = document.getElementById('detail-import-common-toggle');
+  if (importToggle && currentEditingModel._importCommonEnabled) {
+    importToggle.checked = true;
+    regenerateImportPreview();
+  }
 }
 
 function showDetailPage() {
   currentView = 'detail';
   container.style.display = 'none';
   settingsPage.style.display = 'none';
+  commonConfigPage.style.display = 'none';
   detailPage.style.display = 'block';
   renderDetailForm();
 }
@@ -816,6 +837,7 @@ function showSettingsPage() {
   currentView = 'settings';
   container.style.display = 'none';
   detailPage.style.display = 'none';
+  commonConfigPage.style.display = 'none';
   settingsPage.style.display = 'block';
   renderSettingsPage();
 }
@@ -825,6 +847,7 @@ function showListPage() {
   currentEditingModel = null;
   detailPage.style.display = 'none';
   settingsPage.style.display = 'none';
+  commonConfigPage.style.display = 'none';
   container.style.display = 'block';
 }
 
@@ -904,6 +927,15 @@ function bindDetailEvents() {
       markUnsynced();
       clearTestResult();
     });
+  }
+
+  const importToggle = document.getElementById('detail-import-common-toggle');
+  if (importToggle) {
+    importToggle.addEventListener('change', handleImportCommonToggle);
+  }
+  const editCommonBtn = document.getElementById('detail-edit-common-btn');
+  if (editCommonBtn) {
+    editCommonBtn.addEventListener('click', handleEditCommonClick);
   }
 }
 
@@ -1281,9 +1313,307 @@ function hideDetailPage() {
   showListPage();
 }
 
+// ====== 通用配置：合并辅助 ======
+
+// 深度合并，冲突时 overlay（通用配置）优先；普通值/数组由 overlay 覆盖。
+function deepMergeCommonPriority(base, overlay) {
+  if (overlay === null || overlay === undefined) return base;
+  if (typeof overlay !== 'object' || Array.isArray(overlay)) return overlay;
+  if (typeof base !== 'object' || base === null || Array.isArray(base)) return overlay;
+
+  const result = { ...base };
+  for (const key of Object.keys(overlay)) {
+    if (key in result) {
+      result[key] = deepMergeCommonPriority(result[key], overlay[key]);
+    } else {
+      result[key] = overlay[key];
+    }
+  }
+  return result;
+}
+
+// 反向合并：base（已有通用配置）优先，candidate 只补充 base 中缺失的键。
+function deepMergeKeepExisting(base, candidate) {
+  if (candidate === null || candidate === undefined) return base;
+  if (typeof candidate !== 'object' || Array.isArray(candidate)) return base;
+  if (typeof base !== 'object' || base === null || Array.isArray(base)) return base;
+
+  const result = { ...base };
+  for (const key of Object.keys(candidate)) {
+    if (key in result) {
+      result[key] = deepMergeKeepExisting(result[key], candidate[key]);
+    } else {
+      result[key] = candidate[key];
+    }
+  }
+  return result;
+}
+
+// 兜底：找不到快照时，按通用配置字段从合并预览里删除（best-effort）。
+function stripOverlayFields(target, overlay) {
+  if (target === null || typeof target !== 'object' || Array.isArray(target)) return target;
+  if (overlay === null || typeof overlay !== 'object' || Array.isArray(overlay)) return target;
+
+  const result = { ...target };
+  for (const key of Object.keys(overlay)) {
+    const bothObj = overlay[key] && typeof overlay[key] === 'object' && !Array.isArray(overlay[key])
+      && result[key] && typeof result[key] === 'object' && !Array.isArray(result[key]);
+    if (bothObj) {
+      result[key] = stripOverlayFields(result[key], overlay[key]);
+      if (Object.keys(result[key]).length === 0) {
+        delete result[key];
+      }
+    } else {
+      delete result[key];
+    }
+  }
+  return result;
+}
+
+// ====== 详情页：导入通用配置开关 ======
+
+async function handleImportCommonToggle(e) {
+  const toggle = e.target;
+  const checked = toggle.checked;
+  const editor = document.getElementById('detail-config-editor');
+  const errorEl = document.getElementById('config-parse-error');
+  if (!editor || !currentEditingModel) return;
+
+  const rawText = editor.value;
+  let baseJson;
+  try {
+    baseJson = JSON.parse(rawText || '{}');
+  } catch (err) {
+    toggle.checked = !checked; // 撤销切换
+    if (errorEl) errorEl.textContent = 'JSON 格式错误: ' + err.message;
+    showToast('请先修正原始配置 JSON 格式');
+    return;
+  }
+
+  if (checked) {
+    // 打开：保存快照，读取最新通用配置，合并写回编辑器
+    currentEditingModel._preImportSnapshot = rawText;
+    let commonJson;
+    try {
+      const commonText = await invoke('get_common_config');
+      commonJson = JSON.parse(commonText || '{}');
+    } catch (err) {
+      toggle.checked = false;
+      currentEditingModel._preImportSnapshot = null;
+      showToast('读取通用配置失败: ' + err);
+      return;
+    }
+    const merged = deepMergeCommonPriority(baseJson, commonJson);
+    const mergedText = JSON.stringify(merged, null, 2);
+    currentEditingModel._importCommonEnabled = true;
+    setConfigEditorText(mergedText);
+    handleConfigTextChange();
+    markUnsynced();
+  } else {
+    // 关闭：优先恢复快照
+    const snapshot = currentEditingModel._preImportSnapshot;
+    if (snapshot !== null && snapshot !== undefined) {
+      setConfigEditorText(snapshot);
+      currentEditingModel._preImportSnapshot = null;
+      currentEditingModel._importCommonEnabled = false;
+      handleConfigTextChange();
+      markUnsynced();
+    } else {
+      // 兜底：按通用配置字段从预览里删除
+      try {
+        const commonText = await invoke('get_common_config');
+        const commonJson = JSON.parse(commonText || '{}');
+        const stripped = stripOverlayFields(baseJson, commonJson);
+        setConfigEditorText(JSON.stringify(stripped, null, 2));
+        currentEditingModel._importCommonEnabled = false;
+        handleConfigTextChange();
+        markUnsynced();
+      } catch (err) {
+        currentEditingModel._importCommonEnabled = false;
+        showToast('恢复失败: ' + err);
+      }
+    }
+  }
+}
+
+async function regenerateImportPreview() {
+  if (!currentEditingModel) return;
+  const snapshot = currentEditingModel._preImportSnapshot;
+  if (snapshot === null || snapshot === undefined) return;
+  try {
+    const baseJson = JSON.parse(snapshot);
+    const commonText = await invoke('get_common_config');
+    const commonJson = JSON.parse(commonText || '{}');
+    const merged = deepMergeCommonPriority(baseJson, commonJson);
+    setConfigEditorText(JSON.stringify(merged, null, 2));
+    handleConfigTextChange();
+    markUnsynced();
+  } catch (err) {
+    showToast('刷新预览失败: ' + err);
+  }
+}
+
+async function handleEditCommonClick() {
+  returnToDetailAfterCommonEdit = true;
+  await openCommonConfigPage();
+}
+
+// ====== 通用配置编辑页 ======
+
+async function openCommonConfigPage() {
+  try {
+    const text = await invoke('get_common_config');
+    currentCommonConfigText = (text && text.trim()) ? text : '{}';
+  } catch (err) {
+    showToast('读取通用配置失败: ' + err);
+    currentCommonConfigText = '{}';
+  }
+  showCommonConfigPage();
+}
+
+function showCommonConfigPage() {
+  currentView = 'common-config';
+  container.style.display = 'none';
+  detailPage.style.display = 'none';
+  settingsPage.style.display = 'none';
+  commonConfigPage.style.display = 'block';
+  renderCommonConfigPage();
+}
+
+function renderCommonConfigPage() {
+  commonConfigContent.innerHTML = `
+    <div class="detail-form common-config-form">
+      <div class="form-group">
+        <div class="config-header-row">
+          <label class="form-label">通用 JSON 配置</label>
+          <div class="config-header-actions">
+            <button type="button" class="config-header-link" id="extract-from-current-btn">从当前配置提取</button>
+            <label class="config-wrap-toggle"><input type="checkbox" id="common-config-wrap-toggle"> 自动换行</label>
+          </div>
+        </div>
+        <div class="config-editor-shell" id="common-config-shell">
+          <div class="config-line-numbers" id="common-config-lines">1</div>
+          <div class="config-editor-stack">
+            <pre class="config-editor-highlight" id="common-config-highlight" aria-hidden="true"></pre>
+            <textarea class="config-editor-input" id="common-config-editor" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div class="config-error" id="common-config-error"></div>
+        <div class="common-config-hint">通用配置文件位置：~/.claude/cc_start_common_config.json</div>
+      </div>
+      <div class="common-config-footer">
+        <button type="button" class="btn-save btn-save-compact" id="save-common-config-btn">保存通用配置</button>
+      </div>
+    </div>
+  `;
+
+  setCommonConfigEditorText(currentCommonConfigText);
+  bindCommonConfigEvents();
+}
+
+function setCommonConfigEditorText(text) {
+  setConfigEditorText(text, 'common-config');
+}
+
+function validateCommonConfigJson(text) {
+  const errEl = document.getElementById('common-config-error');
+  try {
+    JSON.parse(text || '{}');
+    if (errEl) errEl.textContent = '';
+    return true;
+  } catch (e) {
+    if (errEl) errEl.textContent = 'JSON 格式错误: ' + e.message;
+    return false;
+  }
+}
+
+function bindCommonConfigEvents() {
+  const editor = document.getElementById('common-config-editor');
+  const saveBtn = document.getElementById('save-common-config-btn');
+  const extractBtn = document.getElementById('extract-from-current-btn');
+  const wrapToggle = document.getElementById('common-config-wrap-toggle');
+
+  if (editor) {
+    editor.addEventListener('input', () => {
+      syncConfigEditorLayout('common-config');
+      validateCommonConfigJson(editor.value);
+    });
+    editor.addEventListener('scroll', () => syncConfigEditorLayout('common-config'));
+    editor.addEventListener('click', () => syncConfigEditorLayout('common-config'));
+    editor.addEventListener('keyup', () => syncConfigEditorLayout('common-config'));
+  }
+  if (wrapToggle) {
+    wrapToggle.addEventListener('change', () => syncConfigEditorLayout('common-config'));
+  }
+  if (saveBtn) saveBtn.addEventListener('click', handleSaveCommonConfig);
+  if (extractBtn) extractBtn.addEventListener('click', handleExtractFromCurrent);
+}
+
+async function handleSaveCommonConfig() {
+  const editor = document.getElementById('common-config-editor');
+  if (!editor) return;
+  const text = editor.value || '{}';
+  if (!validateCommonConfigJson(text)) {
+    showToast('JSON 格式错误，请先修正');
+    return;
+  }
+  try {
+    await invoke('save_common_config', { content: text });
+    currentCommonConfigText = text;
+    showToast('通用配置已保存');
+  } catch (err) {
+    showToast('保存失败: ' + err);
+  }
+}
+
+async function handleExtractFromCurrent() {
+  const detailEditor = document.getElementById('detail-config-editor');
+  const rawJson = detailEditor ? (detailEditor.value || '') : '';
+  if (!rawJson.trim()) {
+    showToast('当前没有可提取的原始配置');
+    return;
+  }
+  let candidate;
+  try {
+    const candidateText = await invoke('extract_common_config_from_raw', { rawJson });
+    candidate = JSON.parse(candidateText || '{}');
+  } catch (err) {
+    showToast('提取失败: ' + err);
+    return;
+  }
+
+  const commonEditor = document.getElementById('common-config-editor');
+  if (!commonEditor) return;
+  let existingJson;
+  try {
+    existingJson = JSON.parse(commonEditor.value || '{}');
+  } catch (e) {
+    showToast('当前通用配置 JSON 格式错误，请先修正');
+    return;
+  }
+
+  const merged = deepMergeKeepExisting(existingJson, candidate);
+  const mergedText = JSON.stringify(merged, null, 2);
+  setCommonConfigEditorText(mergedText);
+  validateCommonConfigJson(mergedText);
+  showToast('已合并候选字段到编辑器（未保存）');
+}
+
+async function handleCommonConfigBack() {
+  if (returnToDetailAfterCommonEdit && currentEditingModel) {
+    returnToDetailAfterCommonEdit = false;
+    showDetailPage();
+  } else {
+    showListPage();
+  }
+}
+
 backBtn.addEventListener('click', hideDetailPage);
 settingsBackBtn.addEventListener('click', showListPage);
 settingsBtn.addEventListener('click', showSettingsPage);
+if (commonConfigBackBtn) {
+  commonConfigBackBtn.addEventListener('click', handleCommonConfigBack);
+}
 
 document.getElementById('open-models-dir-btn').addEventListener('click', async () => {
   try {
@@ -1312,7 +1642,9 @@ addConfigBtn.addEventListener('click', () => {
     _originalAlias: null,
     _isNew: true,
     _authMode: 'AUTH_TOKEN',
-    _originalJson: {}
+    _originalJson: {},
+    _importCommonEnabled: false,
+    _preImportSnapshot: null
   };
   showDetailPage();
 });

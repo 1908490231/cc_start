@@ -94,6 +94,10 @@ fn get_prefs_path() -> PathBuf {
     get_claude_dir().join("cc_start_prefs.json")
 }
 
+fn get_common_config_path() -> PathBuf {
+    get_claude_dir().join("cc_start_common_config.json")
+}
+
 fn normalize_alias(alias: &str) -> String {
     alias.trim().to_string()
 }
@@ -153,6 +157,69 @@ fn write_prefs_file(prefs: &UserPrefs) -> Result<(), String> {
 
     let content = serde_json::to_string_pretty(prefs).map_err(|e| e.to_string())?;
     fs::write(get_prefs_path(), content).map_err(|e| e.to_string())
+}
+
+// 通用配置：将原始 JSON 中不应自动提取的私有字段移除
+// 顶层私有：display_name / working_dir / mode
+// env 私有：ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL
+// 以及 ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL
+// 如果剥离后 env 变成空对象，则同时移除 env
+fn strip_excluded_for_common(value: &mut serde_json::Value) {
+    let Some(obj) = value.as_object_mut() else { return };
+
+    obj.remove("display_name");
+    obj.remove("working_dir");
+    obj.remove("mode");
+
+    if let Some(env) = obj.get_mut("env").and_then(|v| v.as_object_mut()) {
+        env.remove("ANTHROPIC_API_KEY");
+        env.remove("ANTHROPIC_AUTH_TOKEN");
+        env.remove("ANTHROPIC_BASE_URL");
+        env.remove("ANTHROPIC_MODEL");
+        env.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+        env.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+        env.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+    }
+
+    let env_empty = obj
+        .get("env")
+        .and_then(|v| v.as_object())
+        .map(|m| m.is_empty())
+        .unwrap_or(false);
+    if env_empty {
+        obj.remove("env");
+    }
+}
+
+fn read_common_config_from(path: &PathBuf) -> String {
+    if !path.exists() {
+        return "{}".to_string();
+    }
+    fs::read_to_string(path).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn save_common_config_to(path: &PathBuf, content: &str) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(content)
+        .map_err(|e| format!("JSON 格式错误: {}", e))?;
+    let pretty = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    fs::write(path, pretty).map_err(|e| e.to_string())
+}
+
+fn extract_common_config_candidate(raw_json: &str) -> Result<String, String> {
+    let trimmed = raw_json.trim();
+    if trimmed.is_empty() {
+        return Ok("{}".to_string());
+    }
+    let mut value: serde_json::Value = serde_json::from_str(trimmed)
+        .map_err(|e| format!("JSON 格式错误: {}", e))?;
+    strip_excluded_for_common(&mut value);
+    serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
 }
 
 fn classify_connectivity_response(status_code: u16, elapsed_ms: u64, message: String) -> TestResult {
@@ -626,6 +693,21 @@ fn cleanup_trash(trash_dir: &PathBuf, keep: usize) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn get_common_config() -> Result<String, String> {
+    Ok(read_common_config_from(&get_common_config_path()))
+}
+
+#[tauri::command]
+fn save_common_config(content: String) -> Result<(), String> {
+    save_common_config_to(&get_common_config_path(), &content)
+}
+
+#[tauri::command]
+fn extract_common_config_from_raw(raw_json: String) -> Result<String, String> {
+    extract_common_config_candidate(&raw_json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,6 +821,178 @@ mod tests {
     }
 
 
+    // ====== 通用配置：自动提取排除规则 ======
+
+    #[test]
+    fn strip_excluded_removes_top_level_private_fields() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            r#"{"display_name":"x","working_dir":"y","mode":"normal","custom":1}"#
+        ).unwrap();
+        strip_excluded_for_common(&mut value);
+        let obj = value.as_object().unwrap();
+        assert!(!obj.contains_key("display_name"));
+        assert!(!obj.contains_key("working_dir"));
+        assert!(!obj.contains_key("mode"));
+        assert_eq!(obj.get("custom"), Some(&serde_json::json!(1)));
+    }
+
+    #[test]
+    fn strip_excluded_removes_env_private_fields() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            r#"{"env":{"ANTHROPIC_API_KEY":"a","ANTHROPIC_AUTH_TOKEN":"b","ANTHROPIC_BASE_URL":"c","ANTHROPIC_MODEL":"d","ANTHROPIC_DEFAULT_HAIKU_MODEL":"e","ANTHROPIC_DEFAULT_SONNET_MODEL":"f","ANTHROPIC_DEFAULT_OPUS_MODEL":"g","CUSTOM_VAR":"h"}}"#
+        ).unwrap();
+        strip_excluded_for_common(&mut value);
+        let env = value.get("env").unwrap().as_object().unwrap();
+        assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!env.contains_key("ANTHROPIC_AUTH_TOKEN"));
+        assert!(!env.contains_key("ANTHROPIC_BASE_URL"));
+        assert!(!env.contains_key("ANTHROPIC_MODEL"));
+        assert!(!env.contains_key("ANTHROPIC_DEFAULT_HAIKU_MODEL"));
+        assert!(!env.contains_key("ANTHROPIC_DEFAULT_SONNET_MODEL"));
+        assert!(!env.contains_key("ANTHROPIC_DEFAULT_OPUS_MODEL"));
+        assert_eq!(env.get("CUSTOM_VAR"), Some(&serde_json::json!("h")));
+    }
+
+    #[test]
+    fn strip_excluded_removes_env_when_all_fields_excluded() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            r#"{"env":{"ANTHROPIC_API_KEY":"a","ANTHROPIC_MODEL":"d"},"custom":1}"#
+        ).unwrap();
+        strip_excluded_for_common(&mut value);
+        let obj = value.as_object().unwrap();
+        assert!(!obj.contains_key("env"));
+        assert_eq!(obj.get("custom"), Some(&serde_json::json!(1)));
+    }
+
+    #[test]
+    fn strip_excluded_preserves_unknown_top_level_fields() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            r#"{"customField":"value","theme":"dark","nested":{"a":1}}"#
+        ).unwrap();
+        strip_excluded_for_common(&mut value);
+        let obj = value.as_object().unwrap();
+        assert_eq!(obj.get("customField"), Some(&serde_json::json!("value")));
+        assert_eq!(obj.get("theme"), Some(&serde_json::json!("dark")));
+        assert_eq!(obj.get("nested"), Some(&serde_json::json!({"a":1})));
+    }
+
+    #[test]
+    fn extract_common_config_invalid_json_returns_error() {
+        let result = extract_common_config_candidate("not json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_common_config_empty_input_returns_empty_object() {
+        let result = extract_common_config_candidate("").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed, serde_json::json!({}));
+    }
+
+    #[test]
+    fn extract_common_config_strips_all_private_fields() {
+        let raw = r#"{
+            "display_name": "Test",
+            "working_dir": "C:/x",
+            "mode": "skip-permissions",
+            "env": {
+                "ANTHROPIC_API_KEY": "secret",
+                "ANTHROPIC_BASE_URL": "https://example.com",
+                "ANTHROPIC_MODEL": "claude",
+                "CUSTOM_ENV": "kept"
+            },
+            "customRoot": 42
+        }"#;
+        let result = extract_common_config_candidate(raw).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let obj = parsed.as_object().unwrap();
+        assert!(!obj.contains_key("display_name"));
+        assert!(!obj.contains_key("working_dir"));
+        assert!(!obj.contains_key("mode"));
+        assert_eq!(obj.get("customRoot"), Some(&serde_json::json!(42)));
+        let env = parsed.get("env").unwrap().as_object().unwrap();
+        assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!env.contains_key("ANTHROPIC_BASE_URL"));
+        assert!(!env.contains_key("ANTHROPIC_MODEL"));
+        assert_eq!(env.get("CUSTOM_ENV"), Some(&serde_json::json!("kept")));
+    }
+
+    // ====== 通用配置：读写 ======
+
+    #[test]
+    fn save_common_config_rejects_invalid_json() {
+        let temp_dir = std::env::temp_dir().join(format!("cc_start_common_save_invalid_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("common.json");
+
+        let result = save_common_config_to(&path, "not valid json");
+        assert!(result.is_err());
+        assert!(!path.exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn save_common_config_writes_pretty_json() {
+        let temp_dir = std::env::temp_dir().join(format!("cc_start_common_save_pretty_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("common.json");
+
+        let raw = r#"{"a":1,"nested":{"b":2}}"#;
+        save_common_config_to(&path, raw).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains('\n'), "saved JSON should be pretty-printed");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, serde_json::json!({"a":1,"nested":{"b":2}}));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn save_common_config_overwrites_existing_file() {
+        let temp_dir = std::env::temp_dir().join(format!("cc_start_common_save_overwrite_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("common.json");
+
+        save_common_config_to(&path, r#"{"a":1}"#).unwrap();
+        save_common_config_to(&path, r#"{"b":2}"#).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, serde_json::json!({"b":2}));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn read_common_config_returns_empty_object_when_missing() {
+        let temp_dir = std::env::temp_dir().join(format!("cc_start_common_read_missing_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let path = temp_dir.join("common.json");
+        // 文件不存在
+        let content = read_common_config_from(&path);
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, serde_json::json!({}));
+    }
+
+    #[test]
+    fn read_common_config_returns_file_content_when_exists() {
+        let temp_dir = std::env::temp_dir().join(format!("cc_start_common_read_exists_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        let path = temp_dir.join("common.json");
+        fs::write(&path, r#"{"foo":"bar"}"#).unwrap();
+
+        let content = read_common_config_from(&path);
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed, serde_json::json!({"foo":"bar"}));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -757,7 +1011,10 @@ pub fn run() {
             save_model_config,
             delete_model_config,
             copy_model_config,
-            test_connectivity
+            test_connectivity,
+            get_common_config,
+            save_common_config,
+            extract_common_config_from_raw
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

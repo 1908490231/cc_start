@@ -159,7 +159,12 @@ Tauri 配置在 `desktop/src-tauri/tauri.conf.json`，前端静态资源目录�
 
 - 历史更新记录写在 `README.md` 的“更新日志”小节，不单独维护 `CHANGELOG.md`
 - 桌面端安装包通过 GitHub Releases 发布，不提交到 Git 仓库
-- 每次正式发布前，先更新 `desktop/src-tauri/tauri.conf.json` 的 `version`
+- 每次正式发布前，需要同时更新桌面端版本号：
+  - `desktop/src-tauri/tauri.conf.json` 的 `version`：控制 Tauri 安装包版本和安装包文件名
+  - `desktop/src-tauri/Cargo.toml` 的 `version`：控制桌面端应用内显示的版本号
+- 桌面端构建命令仍然是 `cd desktop && npm run tauri build`
+- 构建完成后，`desktop/scripts/tauri-wrapper.mjs` 会自动把 NSIS 安装包从 `CC Start_<version>_x64-setup.exe` 重命名为 `CC-Start_<version>_x64-setup.exe`
+- GitHub Release 上传横线命名的安装包：`CC-Start_<version>_x64-setup.exe`
 - GitHub Release 标签使用相同版本号并加 `v` 前缀，例如 `v1.0.0`
 - 常用版本号规则：`1.0.1` 表示 bug 修复或小改动，`1.1.0` 表示兼容性新增功能，`2.0.0` 表示不兼容旧版本的重大变化
 
