@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct ModelInfo {
@@ -65,6 +66,17 @@ struct UserPrefs {
     pinned_aliases: Vec<String>,
     #[serde(default)]
     custom_order: Vec<String>,
+    // 自动备份频率（小时）。0 表示关闭备份；当前 UI 仅暴露 0/1/6/24，
+    // 但保存时不做硬限制，方便后续阶段扩展自定义间隔。
+    #[serde(default = "default_backup_interval_hours")]
+    backup_interval_hours: u64,
+    // 上次自动备份时间，Unix 时间戳（秒）。0 表示从未备份。
+    #[serde(default)]
+    last_backup_at: i64,
+}
+
+fn default_backup_interval_hours() -> u64 {
+    24
 }
 
 fn default_prefs() -> UserPrefs {
@@ -73,6 +85,8 @@ fn default_prefs() -> UserPrefs {
         last_alias: String::new(),
         pinned_aliases: Vec::new(),
         custom_order: Vec::new(),
+        backup_interval_hours: default_backup_interval_hours(),
+        last_backup_at: 0,
     }
 }
 
@@ -96,6 +110,10 @@ fn get_prefs_path() -> PathBuf {
 
 fn get_common_config_path() -> PathBuf {
     get_claude_dir().join("cc_start_common_config.json")
+}
+
+fn get_backups_dir() -> PathBuf {
+    get_claude_dir().join("cc_start_backups")
 }
 
 fn normalize_alias(alias: &str) -> String {
@@ -693,6 +711,140 @@ fn cleanup_trash(trash_dir: &PathBuf, keep: usize) -> Result<(), String> {
     Ok(())
 }
 
+// ====== 自动备份 ======
+
+const BACKUP_KEEP_COUNT: usize = 20;
+
+// 在指定目录下创建一份备份（用于测试时传入临时根目录）
+fn create_backup_in(claude_dir: &PathBuf, backups_root: &PathBuf) -> Result<PathBuf, String> {
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let backup_dir = backups_root.join(&timestamp);
+
+    if backup_dir.exists() {
+        // 同一秒内重复触发：直接返回已存在目录，避免错误
+        return Ok(backup_dir);
+    }
+    fs::create_dir_all(&backup_dir).map_err(|e| format!("创建备份目录失败: {}", e))?;
+
+    // 备份模型配置 ~/.claude/models/*.json
+    let models_dir = claude_dir.join("models");
+    if models_dir.exists() {
+        let dest_models = backup_dir.join("models");
+        fs::create_dir_all(&dest_models).map_err(|e| e.to_string())?;
+        if let Ok(entries) = fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                    if let Some(filename) = path.file_name() {
+                        let _ = fs::copy(&path, dest_models.join(filename));
+                    }
+                }
+            }
+        }
+    }
+
+    // 备份通用配置
+    let common_path = claude_dir.join("cc_start_common_config.json");
+    if common_path.exists() {
+        let _ = fs::copy(&common_path, backup_dir.join("cc_start_common_config.json"));
+    }
+
+    // 备份 GUI 偏好
+    let prefs_path = claude_dir.join("cc_start_prefs.json");
+    if prefs_path.exists() {
+        let _ = fs::copy(&prefs_path, backup_dir.join("cc_start_prefs.json"));
+    }
+
+    Ok(backup_dir)
+}
+
+fn create_backup() -> Result<PathBuf, String> {
+    let claude_dir = get_claude_dir();
+    let backups_root = get_backups_dir();
+    if !backups_root.exists() {
+        fs::create_dir_all(&backups_root).map_err(|e| format!("创建备份根目录失败: {}", e))?;
+    }
+    create_backup_in(&claude_dir, &backups_root)
+}
+
+fn cleanup_old_backups_in(backups_root: &PathBuf, keep: usize) -> Result<(), String> {
+    if !backups_root.exists() {
+        return Ok(());
+    }
+    let entries = fs::read_dir(backups_root).map_err(|e| e.to_string())?;
+    let mut entries_with_mtime: Vec<(PathBuf, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let path = e.path();
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            Some((path, mtime))
+        })
+        .collect();
+
+    if entries_with_mtime.len() <= keep {
+        return Ok(());
+    }
+
+    entries_with_mtime.sort_by(|a, b| a.1.cmp(&b.1));
+    let to_remove = entries_with_mtime.len().saturating_sub(keep);
+    for (path, _) in entries_with_mtime.iter().take(to_remove) {
+        let _ = fs::remove_dir_all(path);
+    }
+    Ok(())
+}
+
+fn cleanup_old_backups(keep: usize) -> Result<(), String> {
+    cleanup_old_backups_in(&get_backups_dir(), keep)
+}
+
+// 检查并执行一次备份（如果到期）。失败时仅记录到 stderr，不影响其他流程。
+fn tick_backup_if_due() {
+    let prefs = read_prefs_file();
+    if prefs.backup_interval_hours == 0 {
+        return;
+    }
+
+    let now_secs = chrono::Local::now().timestamp();
+    let elapsed = now_secs.saturating_sub(prefs.last_backup_at);
+    let interval_secs = prefs.backup_interval_hours as i64 * 3600;
+    if elapsed < interval_secs {
+        return;
+    }
+
+    match create_backup() {
+        Ok(_) => {
+            let _ = cleanup_old_backups(BACKUP_KEEP_COUNT);
+            // 重新读取 prefs，避免覆盖用户在备份期间修改的其他字段
+            let mut latest = read_prefs_file();
+            latest.last_backup_at = now_secs;
+            if let Err(e) = write_prefs_file(&latest) {
+                eprintln!("[backup] 更新 last_backup_at 失败: {}", e);
+            }
+        }
+        Err(e) => {
+            // 备份失败仅打印日志，不阻塞用户
+            eprintln!("[backup] 自动备份失败: {}", e);
+        }
+    }
+}
+
+// 一次性启动后台调度线程：每 60 秒检查是否到期。读取 prefs 决定行为，
+// 这样用户调整 backup_interval_hours 后无需重启进程。
+static BACKUP_SCHEDULER_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn start_backup_scheduler() {
+    if BACKUP_SCHEDULER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            tick_backup_if_due();
+        }
+    });
+}
+
 #[tauri::command]
 fn get_common_config() -> Result<String, String> {
     Ok(read_common_config_from(&get_common_config_path()))
@@ -706,6 +858,49 @@ fn save_common_config(content: String) -> Result<(), String> {
 #[tauri::command]
 fn extract_common_config_from_raw(raw_json: String) -> Result<String, String> {
     extract_common_config_candidate(&raw_json)
+}
+
+// 从 ~/.claude/settings.json 提取候选通用配置
+// 复用 strip_excluded_for_common() 排除规则，避免把模型供应商专属字段、
+// API Key、Base URL、模型 ID 等敏感字段写入通用配置。
+#[tauri::command]
+fn extract_common_config_from_settings() -> Result<String, String> {
+    let settings_path = get_claude_dir().join("settings.json");
+    if !settings_path.exists() {
+        return Err("未找到 ~/.claude/settings.json".to_string());
+    }
+
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("读取 settings.json 失败: {}", e))?;
+
+    extract_common_config_candidate(&content)
+}
+
+// 立即手动触发一次备份并清理旧备份。失败时返回错误，方便前端给出提示。
+// 同时把 last_backup_at 更新为当前时间，避免立刻又触发自动备份。
+#[tauri::command]
+fn run_backup_now() -> Result<String, String> {
+    let path = create_backup()?;
+    let _ = cleanup_old_backups(BACKUP_KEEP_COUNT);
+    let mut prefs = read_prefs_file();
+    prefs.last_backup_at = chrono::Local::now().timestamp();
+    let _ = write_prefs_file(&prefs);
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_backups_dir() -> Result<(), String> {
+    let backups_dir = get_backups_dir();
+    if !backups_dir.exists() {
+        fs::create_dir_all(&backups_dir).map_err(|e| e.to_string())?;
+    }
+
+    Command::new("explorer.exe")
+        .arg(backups_dir)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -993,10 +1188,161 @@ mod tests {
     }
 
 
+    // ====== 自动备份 ======
+
+    fn unique_temp_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("cc_start_backup_{}_{}_{}", tag, std::process::id(), nanos))
+    }
+
+    fn setup_fake_claude_dir(claude_dir: &PathBuf) {
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        fs::write(
+            claude_dir.join("models").join("alpha.json"),
+            r#"{"display_name":"Alpha"}"#,
+        ).unwrap();
+        fs::write(
+            claude_dir.join("models").join("beta.json"),
+            r#"{"display_name":"Beta"}"#,
+        ).unwrap();
+        fs::write(
+            claude_dir.join("cc_start_common_config.json"),
+            r#"{"hooks":{}}"#,
+        ).unwrap();
+        fs::write(
+            claude_dir.join("cc_start_prefs.json"),
+            r#"{"remember_model":true,"last_alias":""}"#,
+        ).unwrap();
+    }
+
+    #[test]
+    fn create_backup_copies_models_common_and_prefs() {
+        let claude_dir = unique_temp_dir("create");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        setup_fake_claude_dir(&claude_dir);
+
+        let backup_dir = create_backup_in(&claude_dir, &backups_root).unwrap();
+        assert!(backup_dir.exists());
+        assert!(backup_dir.join("models").join("alpha.json").exists());
+        assert!(backup_dir.join("models").join("beta.json").exists());
+        assert!(backup_dir.join("cc_start_common_config.json").exists());
+        assert!(backup_dir.join("cc_start_prefs.json").exists());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn create_backup_works_when_only_some_files_exist() {
+        let claude_dir = unique_temp_dir("partial");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        // 仅存在 models 目录，无通用配置和偏好文件
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        fs::write(
+            claude_dir.join("models").join("only.json"),
+            r#"{"display_name":"Only"}"#,
+        ).unwrap();
+
+        let backup_dir = create_backup_in(&claude_dir, &backups_root).unwrap();
+        assert!(backup_dir.join("models").join("only.json").exists());
+        assert!(!backup_dir.join("cc_start_common_config.json").exists());
+        assert!(!backup_dir.join("cc_start_prefs.json").exists());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn cleanup_old_backups_keeps_latest_n() {
+        let backups_root = unique_temp_dir("cleanup");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+
+        // 创建 5 个时间戳目录，模拟历史备份
+        let names = ["20260101-000001", "20260102-000001", "20260103-000001", "20260104-000001", "20260105-000001"];
+        for name in &names {
+            let dir = backups_root.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("marker"), name).unwrap();
+            // 间隔短暂延迟，让 mtime 顺序与名称顺序一致
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        cleanup_old_backups_in(&backups_root, 3).unwrap();
+
+        // 仅保留最近 3 个（最新 mtime 的）
+        let kept: Vec<String> = fs::read_dir(&backups_root).unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        assert_eq!(kept.len(), 3);
+        assert!(kept.contains(&"20260103-000001".to_string()));
+        assert!(kept.contains(&"20260104-000001".to_string()));
+        assert!(kept.contains(&"20260105-000001".to_string()));
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    #[test]
+    fn cleanup_old_backups_no_op_when_under_limit() {
+        let backups_root = unique_temp_dir("cleanup_under");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+        fs::create_dir_all(backups_root.join("20260101-000001")).unwrap();
+        fs::create_dir_all(backups_root.join("20260102-000001")).unwrap();
+
+        cleanup_old_backups_in(&backups_root, 5).unwrap();
+
+        let count = fs::read_dir(&backups_root).unwrap().count();
+        assert_eq!(count, 2);
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    #[test]
+    fn cleanup_old_backups_no_op_when_dir_missing() {
+        let backups_root = unique_temp_dir("cleanup_missing");
+        let _ = fs::remove_dir_all(&backups_root);
+        // 不创建目录
+        let result = cleanup_old_backups_in(&backups_root, 5);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn user_prefs_default_backup_interval_is_24() {
+        let prefs = default_prefs();
+        assert_eq!(prefs.backup_interval_hours, 24);
+        assert_eq!(prefs.last_backup_at, 0);
+    }
+
+    #[test]
+    fn user_prefs_deserialize_legacy_without_backup_fields() {
+        // 旧版本 prefs 文件没有 backup_interval_hours，反序列化时应使用默认值
+        let legacy = r#"{"remember_model":true,"last_alias":"kimi"}"#;
+        let prefs: UserPrefs = serde_json::from_str(legacy).unwrap();
+        assert_eq!(prefs.remember_model, true);
+        assert_eq!(prefs.last_alias, "kimi");
+        assert_eq!(prefs.backup_interval_hours, 24);
+        assert_eq!(prefs.last_backup_at, 0);
+    }
+
+    #[test]
+    fn user_prefs_deserialize_with_backup_off() {
+        let json = r#"{"remember_model":false,"last_alias":"","backup_interval_hours":0,"last_backup_at":1700000000}"#;
+        let prefs: UserPrefs = serde_json::from_str(json).unwrap();
+        assert_eq!(prefs.backup_interval_hours, 0);
+        assert_eq!(prefs.last_backup_at, 1700000000);
+    }
+
+
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    start_backup_scheduler();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -1014,7 +1360,10 @@ pub fn run() {
             test_connectivity,
             get_common_config,
             save_common_config,
-            extract_common_config_from_raw
+            extract_common_config_from_raw,
+            extract_common_config_from_settings,
+            run_backup_now,
+            open_backups_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

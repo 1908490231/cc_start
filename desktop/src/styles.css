@@ -968,6 +968,34 @@ body.row-dragging * {
   flex-wrap: wrap;
 }
 
+.settings-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #4d443d;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.settings-form-row > span {
+  min-width: 80px;
+}
+
+.settings-form-row select {
+  padding: 6px 10px;
+  border: 1px solid #d8c9bc;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  color: #2c2c2c;
+  cursor: pointer;
+}
+
+.settings-form-row-actions {
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
 .btn-danger {
   padding: 8px 16px;
   background: rgba(192, 57, 43, 0.08);

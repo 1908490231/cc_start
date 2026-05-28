@@ -10,7 +10,9 @@ let prefs = {
   remember_model: true,
   last_alias: '',
   pinned_aliases: [],
-  custom_order: []
+  custom_order: [],
+  backup_interval_hours: 24,
+  last_backup_at: 0
 };
 
 const configList = document.getElementById('config-list');
@@ -55,7 +57,9 @@ async function loadPrefs() {
       remember_model: true,
       last_alias: '',
       pinned_aliases: [],
-      custom_order: []
+      custom_order: [],
+      backup_interval_hours: 24,
+      last_backup_at: 0
     };
   }
 }
@@ -786,10 +790,35 @@ function showDetailPage() {
 }
 
 function renderSettingsPage() {
+  const interval = Number.isFinite(prefs.backup_interval_hours) ? prefs.backup_interval_hours : 24;
+  const lastBackupAt = prefs.last_backup_at || 0;
+  const lastBackupText = lastBackupAt > 0
+    ? new Date(lastBackupAt * 1000).toLocaleString()
+    : '尚未备份';
+
   settingsContent.innerHTML = `
     <div class="settings-card">
       <h3 class="settings-section-title">显示</h3>
       <label class="settings-checkbox"><input type="checkbox" id="remember-model" ${prefs.remember_model ? 'checked' : ''}> 高亮上次启动的配置</label>
+    </div>
+
+    <div class="settings-card">
+      <h3 class="settings-section-title">自动备份</h3>
+      <label class="settings-form-row">
+        <span>备份频率</span>
+        <select id="backup-interval">
+          <option value="0" ${interval === 0 ? 'selected' : ''}>关闭</option>
+          <option value="1" ${interval === 1 ? 'selected' : ''}>每 1 小时</option>
+          <option value="6" ${interval === 6 ? 'selected' : ''}>每 6 小时</option>
+          <option value="24" ${interval === 24 ? 'selected' : ''}>每 24 小时</option>
+        </select>
+      </label>
+      <div class="settings-about-item">备份目录：~/.claude/cc_start_backups/，自动保留最近 20 份</div>
+      <div class="settings-about-item">上次备份时间：${lastBackupText}</div>
+      <div class="settings-form-row settings-form-row-actions">
+        <button type="button" class="btn-edit" id="run-backup-now-btn">立即备份一次</button>
+        <button type="button" class="btn-edit" id="open-backups-dir-btn">打开备份目录</button>
+      </div>
     </div>
 
     <div class="settings-card">
@@ -812,6 +841,51 @@ function bindSettingsEvents() {
     renderConfigList(searchBox.value || '');
     showToast('设置已保存');
   });
+
+  const backupInterval = document.getElementById('backup-interval');
+  if (backupInterval) {
+    backupInterval.addEventListener('change', async () => {
+      const value = parseInt(backupInterval.value, 10) || 0;
+      try {
+        await persistPrefs({ backup_interval_hours: value });
+        showToast(value === 0 ? '已关闭自动备份' : `已设置为每 ${value} 小时备份一次`);
+      } catch (err) {
+        showToast('保存失败: ' + err);
+      }
+    });
+  }
+
+  const runBackupNowBtn = document.getElementById('run-backup-now-btn');
+  if (runBackupNowBtn) {
+    runBackupNowBtn.addEventListener('click', async () => {
+      runBackupNowBtn.disabled = true;
+      const originalText = runBackupNowBtn.textContent;
+      runBackupNowBtn.textContent = '备份中...';
+      try {
+        const path = await invoke('run_backup_now');
+        showToast('已备份到：' + path);
+        // 刷新偏好与设置页（last_backup_at 由后端写回）
+        await loadPrefs();
+        renderSettingsPage();
+      } catch (err) {
+        showToast('备份失败: ' + err);
+      } finally {
+        runBackupNowBtn.disabled = false;
+        runBackupNowBtn.textContent = originalText;
+      }
+    });
+  }
+
+  const openBackupsDirBtn = document.getElementById('open-backups-dir-btn');
+  if (openBackupsDirBtn) {
+    openBackupsDirBtn.addEventListener('click', async () => {
+      try {
+        await invoke('open_backups_dir');
+      } catch (err) {
+        showToast('打开备份目录失败: ' + err);
+      }
+    });
+  }
 }
 
 async function loadSettingsMeta() {
@@ -1487,6 +1561,7 @@ function renderCommonConfigPage() {
         <div class="config-header-row">
           <label class="form-label">通用 JSON 配置</label>
           <div class="config-header-actions">
+            <button type="button" class="config-header-link" id="extract-from-settings-btn">从 settings.json 提取</button>
             <button type="button" class="config-header-link" id="extract-from-current-btn">从当前配置提取</button>
             <label class="config-wrap-toggle"><input type="checkbox" id="common-config-wrap-toggle"> 自动换行</label>
           </div>
@@ -1547,6 +1622,9 @@ function bindCommonConfigEvents() {
   }
   if (saveBtn) saveBtn.addEventListener('click', handleSaveCommonConfig);
   if (extractBtn) extractBtn.addEventListener('click', handleExtractFromCurrent);
+
+  const extractFromSettingsBtn = document.getElementById('extract-from-settings-btn');
+  if (extractFromSettingsBtn) extractFromSettingsBtn.addEventListener('click', handleExtractFromSettings);
 }
 
 async function handleSaveCommonConfig() {
@@ -1597,6 +1675,40 @@ async function handleExtractFromCurrent() {
   setCommonConfigEditorText(mergedText);
   validateCommonConfigJson(mergedText);
   showToast('已合并候选字段到编辑器（未保存）');
+}
+
+// 从 ~/.claude/settings.json 提取候选通用配置，并以"已有键不覆盖"的方式
+// 合并到当前编辑器内容；保存仍需用户点击保存按钮，与"从当前配置提取"语义一致。
+async function handleExtractFromSettings() {
+  let candidate;
+  try {
+    const candidateText = await invoke('extract_common_config_from_settings');
+    candidate = JSON.parse(candidateText || '{}');
+  } catch (err) {
+    showToast('提取失败: ' + err);
+    return;
+  }
+
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || Object.keys(candidate).length === 0) {
+    showToast('未发现可复用通用配置');
+    return;
+  }
+
+  const commonEditor = document.getElementById('common-config-editor');
+  if (!commonEditor) return;
+  let existingJson;
+  try {
+    existingJson = JSON.parse(commonEditor.value || '{}');
+  } catch (e) {
+    showToast('当前通用配置 JSON 格式错误，请先修正');
+    return;
+  }
+
+  const merged = deepMergeKeepExisting(existingJson, candidate);
+  const mergedText = JSON.stringify(merged, null, 2);
+  setCommonConfigEditorText(mergedText);
+  validateCommonConfigJson(mergedText);
+  showToast('已从 settings.json 合并候选字段（未保存）');
 }
 
 async function handleCommonConfigBack() {
