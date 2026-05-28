@@ -308,6 +308,19 @@ function openEditForModel(model) {
     }
   }
 
+  // 读取 cc_start 元信息（仅本桌面端使用），然后从展示态 JSON 中剥离，
+  // 避免编辑器把内部状态字段直接暴露给用户。保存时由 saveCurrentConfig 重新注入。
+  let importCommonEnabled = false;
+  if (originalJson && typeof originalJson === 'object' && !Array.isArray(originalJson)) {
+    const meta = originalJson.cc_start;
+    if (meta && typeof meta === 'object') {
+      importCommonEnabled = !!meta.import_common_config;
+    }
+    if ('cc_start' in originalJson) {
+      delete originalJson.cc_start;
+    }
+  }
+
   currentEditingModel = {
     ...model,
     api_key: apiKeyValue,
@@ -315,7 +328,7 @@ function openEditForModel(model) {
     _authMode: model.auth_mode || 'AUTH_TOKEN',
     _isNew: false,
     _originalJson: originalJson,
-    _importCommonEnabled: false,
+    _importCommonEnabled: importCommonEnabled,
     _preImportSnapshot: null,
     haiku_model: model.haiku_model || '',
     opus_model: model.opus_model || '',
@@ -772,11 +785,11 @@ function renderDetailForm() {
     syncConfigEditorLayout();
   });
 
-  // 切回详情页时，若该模型上次在导入预览态，恢复 UI 并重新合并最新通用配置
-  const importToggle = document.getElementById('detail-import-common-toggle');
-  if (importToggle && currentEditingModel._importCommonEnabled) {
-    importToggle.checked = true;
-    regenerateImportPreview();
+  // 切回详情页时，若该模型上次保存为"已导入通用配置"，自动用最新通用配置合并预览。
+  // 不写入 _preImportSnapshot：取消勾选时走"无快照"路径，按当前通用配置字段精确删除，
+  // 既能去掉本次导入带进来的字段，又能保留用户在编辑器里手写的非通用字段。
+  if (currentEditingModel._importCommonEnabled) {
+    applyImportOnOpenIfNeeded();
   }
 }
 
@@ -1307,8 +1320,28 @@ async function saveCurrentConfig(closeAfter = true) {
   let raw_json = '';
   if (rawText.trim()) {
     try {
-      JSON.parse(rawText);
-      raw_json = rawText;
+      const parsed = JSON.parse(rawText);
+      // 根据当前"导入通用配置"勾选状态，注入或清理 cc_start.import_common_config 元信息。
+      // 这里以 _importCommonEnabled 为准（受 toggle change 事件维护），保存时再写到 JSON。
+      // _originalJson 已在 openEditForModel 中剥离了 cc_start，所以编辑器里看不到这个字段，
+      // 但保存时仍然会把它写回模型配置文件，让下次打开时恢复"已导入"状态。
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const importEnabled = !!currentEditingModel._importCommonEnabled;
+        if (importEnabled) {
+          if (!parsed.cc_start || typeof parsed.cc_start !== 'object' || Array.isArray(parsed.cc_start)) {
+            parsed.cc_start = {};
+          }
+          parsed.cc_start.import_common_config = true;
+        } else if (parsed.cc_start && typeof parsed.cc_start === 'object' && !Array.isArray(parsed.cc_start)) {
+          delete parsed.cc_start.import_common_config;
+          if (Object.keys(parsed.cc_start).length === 0) {
+            delete parsed.cc_start;
+          }
+        }
+        raw_json = JSON.stringify(parsed, null, 2);
+      } else {
+        raw_json = rawText;
+      }
       if (errorEl) errorEl.textContent = '';
     } catch (e) {
       if (errorEl) errorEl.textContent = 'JSON 格式错误: ' + e.message;
@@ -1525,6 +1558,40 @@ async function regenerateImportPreview() {
   } catch (err) {
     showToast('刷新预览失败: ' + err);
   }
+}
+
+// 打开详情页时，若上次保存为"已导入通用配置"，自动把最新通用配置合并到预览中。
+// 不设置 _preImportSnapshot：用户取消勾选时走 stripOverlayFields 路径，按当前
+// 通用配置键精确删除，与用户"勾选时通用赢、取消时通用键直接删除"的语义一致。
+async function applyImportOnOpenIfNeeded() {
+  if (!currentEditingModel || !currentEditingModel._importCommonEnabled) return;
+  const editor = document.getElementById('detail-config-editor');
+  if (!editor) return;
+
+  const importToggle = document.getElementById('detail-import-common-toggle');
+  if (importToggle) importToggle.checked = true;
+
+  let baseJson;
+  try {
+    baseJson = JSON.parse(editor.value || '{}');
+  } catch (err) {
+    return;
+  }
+
+  let commonJson;
+  try {
+    const commonText = await invoke('get_common_config');
+    commonJson = JSON.parse(commonText || '{}');
+  } catch (err) {
+    showToast('读取通用配置失败: ' + err);
+    return;
+  }
+
+  currentEditingModel._preImportSnapshot = null;
+  const merged = deepMergeCommonPriority(baseJson, commonJson);
+  setConfigEditorText(JSON.stringify(merged, null, 2));
+  handleConfigTextChange();
+  markUnsynced();
 }
 
 async function handleEditCommonClick() {

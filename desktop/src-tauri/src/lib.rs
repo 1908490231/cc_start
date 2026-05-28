@@ -178,7 +178,7 @@ fn write_prefs_file(prefs: &UserPrefs) -> Result<(), String> {
 }
 
 // 通用配置：将原始 JSON 中不应自动提取的私有字段移除
-// 顶层私有：display_name / working_dir / mode
+// 顶层私有：display_name / working_dir / mode / cc_start
 // env 私有：ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL
 // 以及 ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL
 // 如果剥离后 env 变成空对象，则同时移除 env
@@ -188,6 +188,9 @@ fn strip_excluded_for_common(value: &mut serde_json::Value) {
     obj.remove("display_name");
     obj.remove("working_dir");
     obj.remove("mode");
+    // cc_start 命名空间是 CC Start 桌面端的元信息（如 import_common_config），
+    // 不属于通用配置内容，提取通用配置时必须排除，避免污染共享配置文件。
+    obj.remove("cc_start");
 
     if let Some(env) = obj.get_mut("env").and_then(|v| v.as_object_mut()) {
         env.remove("ANTHROPIC_API_KEY");
@@ -1069,6 +1072,18 @@ mod tests {
         assert_eq!(obj.get("customField"), Some(&serde_json::json!("value")));
         assert_eq!(obj.get("theme"), Some(&serde_json::json!("dark")));
         assert_eq!(obj.get("nested"), Some(&serde_json::json!({"a":1})));
+    }
+
+    #[test]
+    fn strip_excluded_removes_cc_start_metadata() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            r#"{"cc_start":{"import_common_config":true},"hooks":{"a":1}}"#
+        ).unwrap();
+        strip_excluded_for_common(&mut value);
+        let obj = value.as_object().unwrap();
+        assert!(!obj.contains_key("cc_start"));
+        // hooks 等通用字段应保留
+        assert_eq!(obj.get("hooks"), Some(&serde_json::json!({"a":1})));
     }
 
     #[test]
