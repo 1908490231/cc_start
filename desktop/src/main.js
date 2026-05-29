@@ -1832,9 +1832,15 @@ async function handleSaveCommonConfig() {
     return;
   }
   try {
-    await invoke('save_common_config', { content: text });
+    // 后端会把所有勾选了"导入通用配置"的模型按新通用配置重写，并返回影响数。
+    const affected = await invoke('save_common_config', { content: text });
     currentCommonConfigText = text;
-    showToast('通用配置已保存');
+    const count = Number.isFinite(affected) ? affected : 0;
+    showToast(count > 0 ? `通用配置已保存，已同步 ${count} 个模型` : '通用配置已保存');
+    // 级联可能改了多个模型 JSON，列表页拿到的 raw_json 已过期，强制重新拉取
+    await loadModels();
+    // 与"保存配置"按钮行为对齐：保存后自动返回上一级（详情页或主页）
+    handleCommonConfigBack();
   } catch (err) {
     showToast('保存失败: ' + err);
   }

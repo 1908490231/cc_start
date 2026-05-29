@@ -252,6 +252,144 @@ fn extract_common_config_candidate(raw_json: &str) -> Result<String, String> {
     serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
 }
 
+// ====== 通用配置级联同步 ======
+
+// 深度合并：overlay 优先（与前端 deepMergeCommonPriority 语义一致）
+fn deep_merge_overlay_priority(base: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    if overlay.is_null() {
+        return base.clone();
+    }
+    let (base_map, overlay_map) = match (base.as_object(), overlay.as_object()) {
+        (Some(b), Some(o)) => (b, o),
+        _ => return overlay.clone(),
+    };
+    let mut result = base_map.clone();
+    for (k, v) in overlay_map {
+        match result.get(k) {
+            Some(existing) => {
+                let merged = deep_merge_overlay_priority(existing, v);
+                result.insert(k.clone(), merged);
+            }
+            None => {
+                result.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    Value::Object(result)
+}
+
+// 按 overlay 中的键路径从 target 中删除字段（与前端 stripOverlayFields 语义一致）。
+// overlay 在某个键上存在 → 删除；嵌套对象则递归剥离，剥光后空对象也一并删除。
+fn strip_overlay_keys(target: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    let (target_map, overlay_map) = match (target.as_object(), overlay.as_object()) {
+        (Some(t), Some(o)) => (t, o),
+        _ => return target.clone(),
+    };
+    let mut result = target_map.clone();
+    for (k, v) in overlay_map {
+        let target_child = match result.get(k) {
+            Some(c) => c.clone(),
+            None => continue,
+        };
+        let both_obj = v.is_object() && target_child.is_object();
+        if both_obj {
+            let stripped = strip_overlay_keys(&target_child, v);
+            if stripped.as_object().map_or(false, |m| m.is_empty()) {
+                result.remove(k);
+            } else {
+                result.insert(k.clone(), stripped);
+            }
+        } else {
+            result.remove(k);
+        }
+    }
+    Value::Object(result)
+}
+
+// 检查模型 JSON 是否标记了 cc_start.import_common_config = true
+fn model_has_import_flag(model: &serde_json::Value) -> bool {
+    model
+        .get("cc_start")
+        .and_then(|v| v.get("import_common_config"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+// 给单个模型 JSON 应用通用配置变更：先剥掉旧通用键，再合并新通用（通用赢）
+fn apply_common_to_model(
+    model: &serde_json::Value,
+    old_common: &serde_json::Value,
+    new_common: &serde_json::Value,
+) -> serde_json::Value {
+    let stripped = strip_overlay_keys(model, old_common);
+    deep_merge_overlay_priority(&stripped, new_common)
+}
+
+// 遍历 models_dir 下所有 *.json，对每个标记了 import_common_config:true 的模型
+// 应用 (old_common → new_common) 的差异并写回。返回成功更新的模型数。
+// 单个模型读取 / 解析失败时跳过，不阻塞其他模型，最终在 stderr 打印警告。
+fn cascade_apply_common_in(
+    models_dir: &PathBuf,
+    old_common: &serde_json::Value,
+    new_common: &serde_json::Value,
+) -> u32 {
+    if !models_dir.exists() {
+        return 0;
+    }
+    let entries = match fs::read_dir(models_dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    let mut count = 0u32;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().map_or(true, |ext| ext != "json") {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[cascade] 读取 {:?} 失败: {}", path, e);
+                continue;
+            }
+        };
+        let mut model: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[cascade] 解析 {:?} 失败: {}", path, e);
+                continue;
+            }
+        };
+        if !model_has_import_flag(&model) {
+            continue;
+        }
+        // 保留 cc_start 元信息，对其余字段做剥离 + 合并
+        let cc_start_meta = model.get("cc_start").cloned();
+        if let Some(obj) = model.as_object_mut() {
+            obj.remove("cc_start");
+        }
+        let mut updated = apply_common_to_model(&model, old_common, new_common);
+        if let (Some(meta), Some(obj)) = (cc_start_meta, updated.as_object_mut()) {
+            obj.insert("cc_start".to_string(), meta);
+        }
+        let pretty = match serde_json::to_string_pretty(&updated) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[cascade] 序列化 {:?} 失败: {}", path, e);
+                continue;
+            }
+        };
+        if let Err(e) = fs::write(&path, pretty) {
+            eprintln!("[cascade] 写回 {:?} 失败: {}", path, e);
+            continue;
+        }
+        count += 1;
+    }
+    count
+}
+
 fn classify_connectivity_response(status_code: u16, elapsed_ms: u64, message: String) -> TestResult {
     match status_code {
         200 | 201 => TestResult {
@@ -884,8 +1022,22 @@ fn get_common_config() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_common_config(content: String) -> Result<(), String> {
-    save_common_config_to(&get_common_config_path(), &content)
+fn save_common_config(content: String) -> Result<u32, String> {
+    let common_path = get_common_config_path();
+    // 读取并解析旧通用配置；解析失败按空对象处理，不影响保存
+    let old_text = read_common_config_from(&common_path);
+    let old_common: serde_json::Value = serde_json::from_str(&old_text)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    save_common_config_to(&common_path, &content)?;
+
+    // 解析新通用配置（已通过 save_common_config_to 校验过 JSON 格式）
+    let new_common: serde_json::Value = serde_json::from_str(&content)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    // 级联：把所有 cc_start.import_common_config:true 的模型从旧通用切换到新通用
+    let count = cascade_apply_common_in(&get_models_dir(), &old_common, &new_common);
+    Ok(count)
 }
 
 #[tauri::command]
@@ -1755,6 +1907,141 @@ mod tests {
         assert!(common_text.contains("\"keep\""));
         let prefs_text = fs::read_to_string(claude_dir.join("cc_start_prefs.json")).unwrap();
         assert!(prefs_text.contains("keep"));
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    // ====== 通用配置级联同步 ======
+
+    #[test]
+    fn deep_merge_overlay_priority_overlay_wins() {
+        let base = serde_json::json!({"a":1, "b":{"x":1, "y":1}, "c":{"only_base":true}});
+        let overlay = serde_json::json!({"a":2, "b":{"x":99}, "d":42});
+        let merged = deep_merge_overlay_priority(&base, &overlay);
+        assert_eq!(merged["a"], serde_json::json!(2));        // overlay wins
+        assert_eq!(merged["b"]["x"], serde_json::json!(99));  // 嵌套 overlay wins
+        assert_eq!(merged["b"]["y"], serde_json::json!(1));   // base 保留
+        assert_eq!(merged["c"]["only_base"], serde_json::json!(true)); // overlay 没有保留
+        assert_eq!(merged["d"], serde_json::json!(42));       // overlay 新增
+    }
+
+    #[test]
+    fn strip_overlay_keys_removes_matching_paths() {
+        let target = serde_json::json!({
+            "a": 1,
+            "b": {"x": 1, "y": 1},
+            "c": "keep",
+            "env": {"KEY1": "v1", "KEY2": "v2"}
+        });
+        let overlay = serde_json::json!({
+            "a": 99,
+            "b": {"x": 99},
+            "env": {"KEY1": "any"}
+        });
+        let stripped = strip_overlay_keys(&target, &overlay);
+        assert!(stripped.get("a").is_none());           // 顶层删除
+        assert!(stripped["b"].get("x").is_none());       // 嵌套删除
+        assert_eq!(stripped["b"]["y"], serde_json::json!(1)); // 嵌套保留
+        assert_eq!(stripped["c"], serde_json::json!("keep"));
+        assert!(stripped["env"].get("KEY1").is_none());
+        assert_eq!(stripped["env"]["KEY2"], serde_json::json!("v2"));
+    }
+
+    #[test]
+    fn strip_overlay_keys_removes_emptied_subtrees() {
+        let target = serde_json::json!({"only": {"x": 1, "y": 2}});
+        let overlay = serde_json::json!({"only": {"x": 0, "y": 0}});
+        let stripped = strip_overlay_keys(&target, &overlay);
+        assert!(stripped.get("only").is_none(), "子树被剥光后应删除空对象");
+    }
+
+    #[test]
+    fn cascade_skips_models_without_import_flag() {
+        let claude_dir = unique_temp_dir("cascade_skip");
+        let models_dir = claude_dir.join("models");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&models_dir).unwrap();
+
+        // model A: 未勾选导入
+        fs::write(
+            models_dir.join("a.json"),
+            r#"{"display_name":"A","env":{"ANTHROPIC_BASE_URL":"https://a"},"hooks":{"old":1}}"#,
+        ).unwrap();
+        // model B: 勾选导入
+        fs::write(
+            models_dir.join("b.json"),
+            r#"{"display_name":"B","cc_start":{"import_common_config":true},"hooks":{"old":1}}"#,
+        ).unwrap();
+
+        let old_common = serde_json::json!({"hooks":{"old":1}});
+        let new_common = serde_json::json!({"hooks":{"new":1}});
+        let count = cascade_apply_common_in(&models_dir, &old_common, &new_common);
+        assert_eq!(count, 1);
+
+        let a_text = fs::read_to_string(models_dir.join("a.json")).unwrap();
+        assert!(a_text.contains("\"old\""), "未勾选模型不应被改动");
+        assert!(!a_text.contains("\"new\""));
+
+        let b_text = fs::read_to_string(models_dir.join("b.json")).unwrap();
+        assert!(b_text.contains("\"new\""), "勾选模型应应用新通用配置");
+        assert!(!b_text.contains("\"old\""), "勾选模型应剥掉旧通用键");
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn cascade_preserves_model_private_and_cc_start_meta() {
+        let claude_dir = unique_temp_dir("cascade_preserve");
+        let models_dir = claude_dir.join("models");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&models_dir).unwrap();
+
+        fs::write(
+            models_dir.join("b.json"),
+            r#"{"display_name":"B","working_dir":"D:/my","mode":"skip-permissions","env":{"ANTHROPIC_AUTH_TOKEN":"secret","ANTHROPIC_BASE_URL":"https://b","ANTHROPIC_MODEL":"claude"},"cc_start":{"import_common_config":true},"hooks":{"old":1}}"#,
+        ).unwrap();
+
+        let old_common = serde_json::json!({"hooks":{"old":1}});
+        let new_common = serde_json::json!({"hooks":{"new":2}, "permissions":{"allow":["Bash"]}});
+        cascade_apply_common_in(&models_dir, &old_common, &new_common);
+
+        let text = fs::read_to_string(models_dir.join("b.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        // 模型私有字段保留
+        assert_eq!(json["display_name"], serde_json::json!("B"));
+        assert_eq!(json["working_dir"], serde_json::json!("D:/my"));
+        assert_eq!(json["mode"], serde_json::json!("skip-permissions"));
+        assert_eq!(json["env"]["ANTHROPIC_AUTH_TOKEN"], serde_json::json!("secret"));
+        assert_eq!(json["env"]["ANTHROPIC_BASE_URL"], serde_json::json!("https://b"));
+        assert_eq!(json["env"]["ANTHROPIC_MODEL"], serde_json::json!("claude"));
+        // cc_start 元信息保留
+        assert_eq!(json["cc_start"]["import_common_config"], serde_json::json!(true));
+        // 新通用配置已合并
+        assert_eq!(json["hooks"]["new"], serde_json::json!(2));
+        assert!(json["hooks"].get("old").is_none(), "旧通用键已被剥掉");
+        assert_eq!(json["permissions"]["allow"][0], serde_json::json!("Bash"));
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn cascade_handles_invalid_model_json_gracefully() {
+        let claude_dir = unique_temp_dir("cascade_invalid");
+        let models_dir = claude_dir.join("models");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&models_dir).unwrap();
+
+        // 损坏的 JSON 不应导致整个级联失败，仅跳过该模型
+        fs::write(models_dir.join("broken.json"), r#"{not valid json"#).unwrap();
+        fs::write(
+            models_dir.join("ok.json"),
+            r#"{"cc_start":{"import_common_config":true},"hooks":{"old":1}}"#,
+        ).unwrap();
+
+        let old_common = serde_json::json!({"hooks":{"old":1}});
+        let new_common = serde_json::json!({"hooks":{"new":1}});
+        let count = cascade_apply_common_in(&models_dir, &old_common, &new_common);
+        assert_eq!(count, 1, "损坏文件被跳过，正常文件继续处理");
 
         let _ = fs::remove_dir_all(&claude_dir);
     }
