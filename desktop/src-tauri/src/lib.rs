@@ -66,17 +66,25 @@ struct UserPrefs {
     pinned_aliases: Vec<String>,
     #[serde(default)]
     custom_order: Vec<String>,
-    // 自动备份频率（小时）。0 表示关闭备份；当前 UI 仅暴露 0/1/6/24，
+    // 自动备份频率（小时）。0 表示关闭备份；当前 UI 暴露 0/1/6/24/168（7 天），
     // 但保存时不做硬限制，方便后续阶段扩展自定义间隔。
     #[serde(default = "default_backup_interval_hours")]
     backup_interval_hours: u64,
     // 上次自动备份时间，Unix 时间戳（秒）。0 表示从未备份。
     #[serde(default)]
     last_backup_at: i64,
+    // 备份保留份数。默认 20，UI 暴露 20/50/100 三档。
+    // 仅作用于常规备份目录，pre-restore 快照目录不参与自动清理。
+    #[serde(default = "default_backup_keep_count")]
+    backup_keep_count: u64,
 }
 
 fn default_backup_interval_hours() -> u64 {
     24
+}
+
+fn default_backup_keep_count() -> u64 {
+    20
 }
 
 fn default_prefs() -> UserPrefs {
@@ -87,6 +95,7 @@ fn default_prefs() -> UserPrefs {
         custom_order: Vec::new(),
         backup_interval_hours: default_backup_interval_hours(),
         last_backup_at: 0,
+        backup_keep_count: default_backup_keep_count(),
     }
 }
 
@@ -716,7 +725,17 @@ fn cleanup_trash(trash_dir: &PathBuf, keep: usize) -> Result<(), String> {
 
 // ====== 自动备份 ======
 
-const BACKUP_KEEP_COUNT: usize = 20;
+// 备份保留份数下限：避免用户误填 0 导致每次备份后立刻被清理。
+// 读 prefs 时若 backup_keep_count 为 0 也按 1 兜底。
+const BACKUP_MIN_KEEP: usize = 1;
+
+fn effective_keep_count(prefs: &UserPrefs) -> usize {
+    if prefs.backup_keep_count == 0 {
+        BACKUP_MIN_KEEP
+    } else {
+        prefs.backup_keep_count as usize
+    }
+}
 
 // 在指定目录下创建一份备份（用于测试时传入临时根目录）
 fn create_backup_in(claude_dir: &PathBuf, backups_root: &PathBuf) -> Result<PathBuf, String> {
@@ -770,6 +789,10 @@ fn create_backup() -> Result<PathBuf, String> {
     create_backup_in(&claude_dir, &backups_root)
 }
 
+// 备份目录名前缀：以 .pre-restore- 开头的目录用于"恢复前自动快照"，
+// 不参与自动清理也不计入用户的"保留 N 份"配额，让用户在误恢复后能手动找回。
+const PRE_RESTORE_PREFIX: &str = ".pre-restore-";
+
 fn cleanup_old_backups_in(backups_root: &PathBuf, keep: usize) -> Result<(), String> {
     if !backups_root.exists() {
         return Ok(());
@@ -778,6 +801,13 @@ fn cleanup_old_backups_in(backups_root: &PathBuf, keep: usize) -> Result<(), Str
     let mut entries_with_mtime: Vec<(PathBuf, std::time::SystemTime)> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
+        // 跳过 pre-restore 快照目录，避免被自动清理删掉
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map(|name| !name.starts_with(PRE_RESTORE_PREFIX))
+                .unwrap_or(true)
+        })
         .filter_map(|e| {
             let path = e.path();
             let mtime = e.metadata().ok()?.modified().ok()?;
@@ -817,7 +847,7 @@ fn tick_backup_if_due() {
 
     match create_backup() {
         Ok(_) => {
-            let _ = cleanup_old_backups(BACKUP_KEEP_COUNT);
+            let _ = cleanup_old_backups(effective_keep_count(&prefs));
             // 重新读取 prefs，避免覆盖用户在备份期间修改的其他字段
             let mut latest = read_prefs_file();
             latest.last_backup_at = now_secs;
@@ -884,10 +914,11 @@ fn extract_common_config_from_settings() -> Result<String, String> {
 #[tauri::command]
 fn run_backup_now() -> Result<String, String> {
     let path = create_backup()?;
-    let _ = cleanup_old_backups(BACKUP_KEEP_COUNT);
-    let mut prefs = read_prefs_file();
-    prefs.last_backup_at = chrono::Local::now().timestamp();
-    let _ = write_prefs_file(&prefs);
+    let prefs = read_prefs_file();
+    let _ = cleanup_old_backups(effective_keep_count(&prefs));
+    let mut latest = read_prefs_file();
+    latest.last_backup_at = chrono::Local::now().timestamp();
+    let _ = write_prefs_file(&latest);
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -904,6 +935,205 @@ fn open_backups_dir() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+// ====== 备份列表与恢复 ======
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct BackupInfo {
+    // 目录名，例如 20260101-120000 或 .pre-restore-20260101-120000
+    name: String,
+    // 是否为"恢复前自动快照"
+    is_pre_restore: bool,
+    // 该备份内 models/*.json 数量
+    model_count: u32,
+    // 备份目录总大小（字节），仅统计文件层
+    size_bytes: u64,
+    // 目录 mtime 的 Unix 时间戳（秒）
+    created_at: i64,
+}
+
+fn dir_total_size(path: &PathBuf) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = fs::read_dir(path) else { return 0 };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                total += meta.len();
+            } else if meta.is_dir() {
+                total += dir_total_size(&p);
+            }
+        }
+    }
+    total
+}
+
+fn count_model_files(path: &PathBuf) -> u32 {
+    let models = path.join("models");
+    if !models.exists() {
+        return 0;
+    }
+    fs::read_dir(&models)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+                .count() as u32
+        })
+        .unwrap_or(0)
+}
+
+fn list_backups_in(backups_root: &PathBuf) -> Vec<BackupInfo> {
+    if !backups_root.exists() {
+        return Vec::new();
+    }
+    let entries = match fs::read_dir(backups_root) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    // 用原始 SystemTime 参与排序，避免 created_at 仅秒级精度时同秒目录顺序抖动
+    let mut items: Vec<(BackupInfo, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let path = e.path();
+            let name = e.file_name().to_str()?.to_string();
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            let created_at = mtime
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            Some((
+                BackupInfo {
+                    is_pre_restore: name.starts_with(PRE_RESTORE_PREFIX),
+                    name,
+                    model_count: count_model_files(&path),
+                    size_bytes: dir_total_size(&path),
+                    created_at,
+                },
+                mtime,
+            ))
+        })
+        .collect();
+
+    // 时间倒序，最新的在前
+    items.sort_by(|a, b| b.1.cmp(&a.1));
+    items.into_iter().map(|(info, _)| info).collect()
+}
+
+#[tauri::command]
+fn list_backups() -> Result<Vec<BackupInfo>, String> {
+    Ok(list_backups_in(&get_backups_dir()))
+}
+
+// 镜像式恢复指定备份。流程：
+// 1) 把当前状态自动备份到 .pre-restore-<now>/，万一恢复结果不满意还能找回
+// 2) 删除 ~/.claude/models/ 下当前所有 *.json，然后从备份目录复制
+// 3) 用备份中的 cc_start_common_config.json / cc_start_prefs.json 覆盖当前文件
+// 仅对 *.json 操作，不动 ~/.claude 下的其他文件
+fn restore_backup_in(claude_dir: &PathBuf, backups_root: &PathBuf, name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("备份名称不能为空".to_string());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("备份名称非法".to_string());
+    }
+
+    let source_dir = backups_root.join(name);
+    if !source_dir.exists() || !source_dir.is_dir() {
+        return Err(format!("备份不存在: {}", name));
+    }
+
+    // 1) 先自动快照当前状态
+    let pre_restore_name = format!(
+        "{}{}",
+        PRE_RESTORE_PREFIX,
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    );
+    let pre_restore_dir = backups_root.join(&pre_restore_name);
+    if !backups_root.exists() {
+        fs::create_dir_all(backups_root).map_err(|e| format!("创建备份根目录失败: {}", e))?;
+    }
+    // 复用 create_backup_in 的实现：传入当前 claude_dir 但目标根换成单次目录
+    // 这里简单内联：直接调用 create_backup_in 然后 rename 不可行（时间戳可能撞），
+    // 改为把 backups_root 传给 create_backup_in 后取它返回的路径即可。
+    // 注意 create_backup_in 内部用 chrono::Local 生成时间戳，与 pre_restore_name 时间戳不同名。
+    // 因此这里不复用，改为手动复制三类文件。
+    fs::create_dir_all(&pre_restore_dir).map_err(|e| format!("创建快照目录失败: {}", e))?;
+
+    let cur_models = claude_dir.join("models");
+    if cur_models.exists() {
+        let snap_models = pre_restore_dir.join("models");
+        fs::create_dir_all(&snap_models).map_err(|e| e.to_string())?;
+        if let Ok(entries) = fs::read_dir(&cur_models) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                    if let Some(filename) = path.file_name() {
+                        let _ = fs::copy(&path, snap_models.join(filename));
+                    }
+                }
+            }
+        }
+    }
+    let cur_common = claude_dir.join("cc_start_common_config.json");
+    if cur_common.exists() {
+        let _ = fs::copy(&cur_common, pre_restore_dir.join("cc_start_common_config.json"));
+    }
+    let cur_prefs = claude_dir.join("cc_start_prefs.json");
+    if cur_prefs.exists() {
+        let _ = fs::copy(&cur_prefs, pre_restore_dir.join("cc_start_prefs.json"));
+    }
+
+    // 2) 镜像恢复 models：清空当前 *.json，再从备份复制
+    let target_models = claude_dir.join("models");
+    if !target_models.exists() {
+        fs::create_dir_all(&target_models).map_err(|e| e.to_string())?;
+    }
+    if let Ok(entries) = fs::read_dir(&target_models) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    let source_models = source_dir.join("models");
+    if source_models.exists() {
+        if let Ok(entries) = fs::read_dir(&source_models) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                    if let Some(filename) = path.file_name() {
+                        fs::copy(&path, target_models.join(filename))
+                            .map_err(|e| format!("复制 {:?} 失败: {}", filename, e))?;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) 通用配置 / 偏好文件直接覆盖（备份里没有就保留当前，不主动删除）
+    let source_common = source_dir.join("cc_start_common_config.json");
+    if source_common.exists() {
+        fs::copy(&source_common, claude_dir.join("cc_start_common_config.json"))
+            .map_err(|e| format!("恢复通用配置失败: {}", e))?;
+    }
+    let source_prefs = source_dir.join("cc_start_prefs.json");
+    if source_prefs.exists() {
+        fs::copy(&source_prefs, claude_dir.join("cc_start_prefs.json"))
+            .map_err(|e| format!("恢复偏好失败: {}", e))?;
+    }
+
+    Ok(pre_restore_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn restore_backup(name: String) -> Result<String, String> {
+    restore_backup_in(&get_claude_dir(), &get_backups_dir(), &name)
 }
 
 #[cfg(test)]
@@ -1352,6 +1582,183 @@ mod tests {
         assert_eq!(prefs.last_backup_at, 1700000000);
     }
 
+    #[test]
+    fn user_prefs_default_backup_keep_count_is_20() {
+        let prefs = default_prefs();
+        assert_eq!(prefs.backup_keep_count, 20);
+    }
+
+    #[test]
+    fn user_prefs_legacy_without_keep_count_uses_default() {
+        let legacy = r#"{"remember_model":true,"last_alias":""}"#;
+        let prefs: UserPrefs = serde_json::from_str(legacy).unwrap();
+        assert_eq!(prefs.backup_keep_count, 20);
+    }
+
+    #[test]
+    fn effective_keep_count_clamps_zero_to_one() {
+        let mut prefs = default_prefs();
+        prefs.backup_keep_count = 0;
+        assert_eq!(effective_keep_count(&prefs), 1);
+        prefs.backup_keep_count = 50;
+        assert_eq!(effective_keep_count(&prefs), 50);
+    }
+
+    #[test]
+    fn cleanup_old_backups_skips_pre_restore_directories() {
+        let backups_root = unique_temp_dir("cleanup_skip_pre_restore");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+
+        // 5 个常规备份 + 2 个 pre-restore，keep=1 时应只保留 1 个常规 + 全部 pre-restore
+        for name in &["20260101-000001", "20260102-000001", "20260103-000001", "20260104-000001", "20260105-000001"] {
+            fs::create_dir_all(backups_root.join(name)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for name in &[".pre-restore-20260101-120000", ".pre-restore-20260102-120000"] {
+            fs::create_dir_all(backups_root.join(name)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        cleanup_old_backups_in(&backups_root, 1).unwrap();
+
+        let entries: Vec<String> = fs::read_dir(&backups_root).unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+
+        let pre_restore_count = entries.iter().filter(|n| n.starts_with(PRE_RESTORE_PREFIX)).count();
+        let regular_count = entries.iter().filter(|n| !n.starts_with(PRE_RESTORE_PREFIX)).count();
+        assert_eq!(pre_restore_count, 2, "pre-restore 目录不能被自动清理");
+        assert_eq!(regular_count, 1, "常规备份按 keep 保留最近 1 份");
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    // ====== 备份列表与恢复 ======
+
+    fn make_backup_dir(backups_root: &PathBuf, name: &str, model_files: &[(&str, &str)]) {
+        let dir = backups_root.join(name);
+        fs::create_dir_all(dir.join("models")).unwrap();
+        for (filename, content) in model_files {
+            fs::write(dir.join("models").join(filename), content).unwrap();
+        }
+    }
+
+    #[test]
+    fn list_backups_returns_empty_when_dir_missing() {
+        let backups_root = unique_temp_dir("list_missing");
+        let _ = fs::remove_dir_all(&backups_root);
+        let infos = list_backups_in(&backups_root);
+        assert!(infos.is_empty());
+    }
+
+    #[test]
+    fn list_backups_returns_metadata_sorted_newest_first() {
+        let backups_root = unique_temp_dir("list_sorted");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+        make_backup_dir(&backups_root, "20260101-000001", &[("a.json", "{}"), ("b.json", "{}")]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        make_backup_dir(&backups_root, "20260102-000001", &[("a.json", "{}"), ("b.json", "{}"), ("c.json", "{}")]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        make_backup_dir(&backups_root, ".pre-restore-20260102-120000", &[("a.json", "{}")]);
+
+        let infos = list_backups_in(&backups_root);
+        assert_eq!(infos.len(), 3);
+        assert_eq!(infos[0].name, ".pre-restore-20260102-120000");
+        assert!(infos[0].is_pre_restore);
+        assert_eq!(infos[1].name, "20260102-000001");
+        assert_eq!(infos[1].model_count, 3);
+        assert_eq!(infos[2].name, "20260101-000001");
+        assert_eq!(infos[2].model_count, 2);
+        assert!(!infos[1].is_pre_restore);
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    #[test]
+    fn restore_backup_mirror_replaces_models_and_creates_pre_restore() {
+        let claude_dir = unique_temp_dir("restore_mirror");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        fs::write(claude_dir.join("models").join("current_only.json"), r#"{"display_name":"current_only"}"#).unwrap();
+        fs::write(claude_dir.join("models").join("shared.json"), r#"{"display_name":"current_shared"}"#).unwrap();
+        fs::write(claude_dir.join("cc_start_common_config.json"), r#"{"hooks":{"current":1}}"#).unwrap();
+
+        // 创建一份目标备份：只包含 shared.json + new_only.json
+        fs::create_dir_all(&backups_root).unwrap();
+        make_backup_dir(&backups_root, "20260101-000001", &[
+            ("shared.json", r#"{"display_name":"backup_shared"}"#),
+            ("new_only.json", r#"{"display_name":"backup_new_only"}"#),
+        ]);
+        fs::write(backups_root.join("20260101-000001").join("cc_start_common_config.json"),
+                  r#"{"hooks":{"backup":1}}"#).unwrap();
+
+        let pre_restore_path = restore_backup_in(&claude_dir, &backups_root, "20260101-000001").unwrap();
+        let pre_restore_dir = PathBuf::from(&pre_restore_path);
+
+        // 镜像式恢复：current_only 不再存在，shared 内容来自备份，new_only 新出现
+        let cur_models = claude_dir.join("models");
+        assert!(!cur_models.join("current_only.json").exists(), "镜像式恢复应删除当前多出的模型");
+        assert!(cur_models.join("shared.json").exists());
+        assert!(cur_models.join("new_only.json").exists());
+        let shared_text = fs::read_to_string(cur_models.join("shared.json")).unwrap();
+        assert!(shared_text.contains("backup_shared"), "shared.json 应被备份内容覆盖");
+        let common_text = fs::read_to_string(claude_dir.join("cc_start_common_config.json")).unwrap();
+        assert!(common_text.contains("\"backup\""));
+
+        // pre-restore 快照应保存恢复前的所有原始文件
+        assert!(pre_restore_dir.join("models").join("current_only.json").exists());
+        assert!(pre_restore_dir.join("models").join("shared.json").exists());
+        let snap_shared = fs::read_to_string(pre_restore_dir.join("models").join("shared.json")).unwrap();
+        assert!(snap_shared.contains("current_shared"), "pre-restore 应保留恢复前的 shared 内容");
+        assert!(pre_restore_dir.join("cc_start_common_config.json").exists());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn restore_backup_rejects_invalid_name() {
+        let claude_dir = unique_temp_dir("restore_invalid");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&backups_root).unwrap();
+
+        assert!(restore_backup_in(&claude_dir, &backups_root, "").is_err());
+        assert!(restore_backup_in(&claude_dir, &backups_root, "../etc").is_err());
+        assert!(restore_backup_in(&claude_dir, &backups_root, "a/b").is_err());
+        assert!(restore_backup_in(&claude_dir, &backups_root, "non_existent").is_err());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn restore_backup_preserves_current_files_when_backup_omits_them() {
+        let claude_dir = unique_temp_dir("restore_partial");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        // 当前有通用配置和偏好
+        fs::write(claude_dir.join("cc_start_common_config.json"), r#"{"keep":1}"#).unwrap();
+        fs::write(claude_dir.join("cc_start_prefs.json"), r#"{"remember_model":true,"last_alias":"keep"}"#).unwrap();
+
+        fs::create_dir_all(&backups_root).unwrap();
+        // 备份只有 models，没有通用配置和偏好
+        make_backup_dir(&backups_root, "20260101-000001", &[("only.json", "{}")]);
+
+        restore_backup_in(&claude_dir, &backups_root, "20260101-000001").unwrap();
+
+        // 当前通用配置和偏好应保留
+        let common_text = fs::read_to_string(claude_dir.join("cc_start_common_config.json")).unwrap();
+        assert!(common_text.contains("\"keep\""));
+        let prefs_text = fs::read_to_string(claude_dir.join("cc_start_prefs.json")).unwrap();
+        assert!(prefs_text.contains("keep"));
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
 
 }
 
@@ -1378,7 +1785,9 @@ pub fn run() {
             extract_common_config_from_raw,
             extract_common_config_from_settings,
             run_backup_now,
-            open_backups_dir
+            open_backups_dir,
+            list_backups,
+            restore_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -12,7 +12,8 @@ let prefs = {
   pinned_aliases: [],
   custom_order: [],
   backup_interval_hours: 24,
-  last_backup_at: 0
+  last_backup_at: 0,
+  backup_keep_count: 20
 };
 
 const configList = document.getElementById('config-list');
@@ -59,7 +60,8 @@ async function loadPrefs() {
       pinned_aliases: [],
       custom_order: [],
       backup_interval_hours: 24,
-      last_backup_at: 0
+      last_backup_at: 0,
+      backup_keep_count: 20
     };
   }
 }
@@ -804,6 +806,9 @@ function showDetailPage() {
 
 function renderSettingsPage() {
   const interval = Number.isFinite(prefs.backup_interval_hours) ? prefs.backup_interval_hours : 24;
+  const keepCount = Number.isFinite(prefs.backup_keep_count) && prefs.backup_keep_count > 0
+    ? prefs.backup_keep_count
+    : 20;
   const lastBackupAt = prefs.last_backup_at || 0;
   const lastBackupText = lastBackupAt > 0
     ? new Date(lastBackupAt * 1000).toLocaleString()
@@ -824,13 +829,26 @@ function renderSettingsPage() {
           <option value="1" ${interval === 1 ? 'selected' : ''}>每 1 小时</option>
           <option value="6" ${interval === 6 ? 'selected' : ''}>每 6 小时</option>
           <option value="24" ${interval === 24 ? 'selected' : ''}>每 24 小时</option>
+          <option value="168" ${interval === 168 ? 'selected' : ''}>每 7 天</option>
         </select>
       </label>
-      <div class="settings-about-item">备份目录：~/.claude/cc_start_backups/，自动保留最近 20 份</div>
+      <label class="settings-form-row">
+        <span>保留份数</span>
+        <select id="backup-keep-count">
+          <option value="20" ${keepCount === 20 ? 'selected' : ''}>最近 20 份</option>
+          <option value="50" ${keepCount === 50 ? 'selected' : ''}>最近 50 份</option>
+          <option value="100" ${keepCount === 100 ? 'selected' : ''}>最近 100 份</option>
+        </select>
+      </label>
+      <div class="settings-about-item">备份目录：~/.claude/cc_start_backups/，恢复前快照（.pre-restore-）不计入保留份数</div>
       <div class="settings-about-item">上次备份时间：${lastBackupText}</div>
       <div class="settings-form-row settings-form-row-actions">
         <button type="button" class="btn-edit" id="run-backup-now-btn">立即备份一次</button>
         <button type="button" class="btn-edit" id="open-backups-dir-btn">打开备份目录</button>
+        <button type="button" class="btn-edit" id="refresh-backups-btn">刷新列表</button>
+      </div>
+      <div class="backup-list" id="backup-list">
+        <div class="backup-list-loading">加载中...</div>
       </div>
     </div>
 
@@ -843,6 +861,7 @@ function renderSettingsPage() {
 
   bindSettingsEvents();
   loadSettingsMeta();
+  loadBackupList();
 }
 
 function bindSettingsEvents() {
@@ -899,6 +918,24 @@ function bindSettingsEvents() {
       }
     });
   }
+
+  const backupKeepCount = document.getElementById('backup-keep-count');
+  if (backupKeepCount) {
+    backupKeepCount.addEventListener('change', async () => {
+      const value = parseInt(backupKeepCount.value, 10) || 20;
+      try {
+        await persistPrefs({ backup_keep_count: value });
+        showToast(`保留份数已改为最近 ${value} 份`);
+      } catch (err) {
+        showToast('保存失败: ' + err);
+      }
+    });
+  }
+
+  const refreshBackupsBtn = document.getElementById('refresh-backups-btn');
+  if (refreshBackupsBtn) {
+    refreshBackupsBtn.addEventListener('click', () => loadBackupList());
+  }
 }
 
 async function loadSettingsMeta() {
@@ -917,6 +954,98 @@ async function loadSettingsMeta() {
     claudeVersionEl.textContent = claudeVersion;
   } catch (err) {
     claudeVersionEl.textContent = '读取失败';
+  }
+}
+
+function formatBackupSize(bytes) {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function escapeAttr(text) {
+  return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function loadBackupList() {
+  const listEl = document.getElementById('backup-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="backup-list-loading">加载中...</div>';
+
+  let infos;
+  try {
+    infos = await invoke('list_backups');
+  } catch (err) {
+    listEl.innerHTML = `<div class="backup-list-empty">读取备份列表失败：${escapeAttr(err)}</div>`;
+    return;
+  }
+
+  if (!infos || infos.length === 0) {
+    listEl.innerHTML = '<div class="backup-list-empty">尚无备份记录</div>';
+    return;
+  }
+
+  const rows = infos.map(info => {
+    const created = info.created_at > 0
+      ? new Date(info.created_at * 1000).toLocaleString()
+      : '-';
+    const tag = info.is_pre_restore
+      ? '<span class="backup-tag tag-pre-restore">恢复前快照</span>'
+      : '<span class="backup-tag tag-regular">备份</span>';
+    return `
+      <div class="backup-row" data-name="${escapeAttr(info.name)}">
+        <div class="backup-row-main">
+          <div class="backup-row-title">
+            ${tag}
+            <span class="backup-row-name">${escapeAttr(info.name)}</span>
+          </div>
+          <div class="backup-row-meta">
+            ${created} · ${info.model_count} 个模型 · ${formatBackupSize(info.size_bytes)}
+          </div>
+        </div>
+        <button type="button" class="btn-edit btn-restore" data-action="restore">恢复此备份</button>
+      </div>
+    `;
+  }).join('');
+
+  listEl.innerHTML = rows;
+
+  listEl.querySelectorAll('[data-action="restore"]').forEach(btn => {
+    btn.addEventListener('click', handleRestoreBackup);
+  });
+}
+
+async function handleRestoreBackup(e) {
+  const row = e.target.closest('.backup-row');
+  if (!row) return;
+  const name = row.dataset.name;
+  if (!name) return;
+
+  const confirmed = await confirmDialog(
+    `确认恢复备份「${name}」？\n\n` +
+    `镜像式恢复：当前 ~/.claude/models/ 下的模型配置会被备份内容完全替换，` +
+    `当前多出而备份中没有的模型会被删除。\n\n` +
+    `恢复前会先把当前状态自动备份到 .pre-restore-* 目录，万一出问题可以从那里找回。`,
+    { title: '确认恢复', kind: 'warning' }
+  );
+  if (!confirmed) return;
+
+  const restoreBtn = e.target;
+  const originalText = restoreBtn.textContent;
+  restoreBtn.disabled = true;
+  restoreBtn.textContent = '恢复中...';
+
+  try {
+    const preRestorePath = await invoke('restore_backup', { name });
+    showToast(`恢复完成。原状态已保存到：${preRestorePath}`);
+    // 重新加载偏好（备份里的 prefs 已覆盖当前），刷新列表与设置页
+    await loadPrefs();
+    await loadModels();
+    renderSettingsPage();
+  } catch (err) {
+    showToast('恢复失败: ' + err);
+    restoreBtn.disabled = false;
+    restoreBtn.textContent = originalText;
   }
 }
 
