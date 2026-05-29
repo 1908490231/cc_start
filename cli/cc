@@ -923,8 +923,10 @@ launch_claude() {
     printf '\033[?25l'  # 隐藏光标
 
     # 两端环境互不兼容，必须分支处理（诊断结论）：
-    # - PowerShell (MSYS bash): stdin 可读 + \033[s/u 光标保存恢复
-    # - mintty (Git Bash):      stdin 异常需 /dev/tty + \033[nA 光标上移
+    # - PowerShell / cmd (MSYS bash): stdin 可读，直接 read
+    # - mintty (Git Bash):            stdin 异常，需从 /dev/tty 读
+    # 光标重绘统一用 \033[nA（相对上移），不依赖 \033[s/u 保存的绝对坐标，
+    # 避免上层菜单触发滚动后绝对坐标失效（详见下方 PowerShell 分支注释）。
     if [[ "$TERM_PROGRAM" == "mintty" ]]; then
         # ── mintty 分支 ──
         exec 3</dev/tty
@@ -955,9 +957,11 @@ launch_claude() {
         exec 3>&-
     else
         # ── PowerShell / 其他分支 ──
-        printf '\033[s'  # 保存光标位置
+        # 不使用 \033[s / \033[u（DECSC/DECRC）保存绝对光标位置：
+        # 当上层菜单（如 cc → 数字选模型）已把屏幕推到底部，再打印 options 会触发滚动，
+        # 滚动会让保存的绝对行号失效，下一次 \033[u 会恢复到菜单下方，导致菜单不断追加。
+        # 改为与 mintty 分支一致的 \033[nA（相对上移），免疫滚动。
         while true; do
-            printf '\033[u'  # 恢复到保存的光标位置
             for i in "${!options[@]}"; do
                 if [[ $i -eq $selected ]]; then
                     printf "  \033[32m▶ ${options[$i]}\033[0m\033[K\n"
@@ -974,6 +978,7 @@ launch_claude() {
                     '[A') selected=$(( (selected - 1 + count) % count )) ;;
                     '[B') selected=$(( (selected + 1) % count )) ;;
                 esac
+                printf "\033[${count}A"
             elif [[ "$key" == "" || "$key" == $'\r' || "$key" == $'\n' ]]; then
                 # 消耗缓冲区中可能残留的 \n（\r\n 场景）
                 IFS= read -rsn1 -t 0.05 _drain 2>/dev/null || true
