@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct ModelInfo {
@@ -65,6 +66,25 @@ struct UserPrefs {
     pinned_aliases: Vec<String>,
     #[serde(default)]
     custom_order: Vec<String>,
+    // 自动备份频率（小时）。0 表示关闭备份；当前 UI 暴露 0/1/6/24/168（7 天），
+    // 但保存时不做硬限制，方便后续阶段扩展自定义间隔。
+    #[serde(default = "default_backup_interval_hours")]
+    backup_interval_hours: u64,
+    // 上次自动备份时间，Unix 时间戳（秒）。0 表示从未备份。
+    #[serde(default)]
+    last_backup_at: i64,
+    // 备份保留份数。默认 20，UI 暴露 20/50/100 三档。
+    // 仅作用于常规备份目录，pre-restore 快照目录不参与自动清理。
+    #[serde(default = "default_backup_keep_count")]
+    backup_keep_count: u64,
+}
+
+fn default_backup_interval_hours() -> u64 {
+    24
+}
+
+fn default_backup_keep_count() -> u64 {
+    20
 }
 
 fn default_prefs() -> UserPrefs {
@@ -73,6 +93,9 @@ fn default_prefs() -> UserPrefs {
         last_alias: String::new(),
         pinned_aliases: Vec::new(),
         custom_order: Vec::new(),
+        backup_interval_hours: default_backup_interval_hours(),
+        last_backup_at: 0,
+        backup_keep_count: default_backup_keep_count(),
     }
 }
 
@@ -96,6 +119,10 @@ fn get_prefs_path() -> PathBuf {
 
 fn get_common_config_path() -> PathBuf {
     get_claude_dir().join("cc_start_common_config.json")
+}
+
+fn get_backups_dir() -> PathBuf {
+    get_claude_dir().join("cc_start_backups")
 }
 
 fn normalize_alias(alias: &str) -> String {
@@ -160,7 +187,7 @@ fn write_prefs_file(prefs: &UserPrefs) -> Result<(), String> {
 }
 
 // 通用配置：将原始 JSON 中不应自动提取的私有字段移除
-// 顶层私有：display_name / working_dir / mode
+// 顶层私有：display_name / working_dir / mode / cc_start
 // env 私有：ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL
 // 以及 ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL
 // 如果剥离后 env 变成空对象，则同时移除 env
@@ -170,6 +197,9 @@ fn strip_excluded_for_common(value: &mut serde_json::Value) {
     obj.remove("display_name");
     obj.remove("working_dir");
     obj.remove("mode");
+    // cc_start 命名空间是 CC Start 桌面端的元信息（如 import_common_config），
+    // 不属于通用配置内容，提取通用配置时必须排除，避免污染共享配置文件。
+    obj.remove("cc_start");
 
     if let Some(env) = obj.get_mut("env").and_then(|v| v.as_object_mut()) {
         env.remove("ANTHROPIC_API_KEY");
@@ -220,6 +250,144 @@ fn extract_common_config_candidate(raw_json: &str) -> Result<String, String> {
         .map_err(|e| format!("JSON 格式错误: {}", e))?;
     strip_excluded_for_common(&mut value);
     serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
+}
+
+// ====== 通用配置级联同步 ======
+
+// 深度合并：overlay 优先（与前端 deepMergeCommonPriority 语义一致）
+fn deep_merge_overlay_priority(base: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    if overlay.is_null() {
+        return base.clone();
+    }
+    let (base_map, overlay_map) = match (base.as_object(), overlay.as_object()) {
+        (Some(b), Some(o)) => (b, o),
+        _ => return overlay.clone(),
+    };
+    let mut result = base_map.clone();
+    for (k, v) in overlay_map {
+        match result.get(k) {
+            Some(existing) => {
+                let merged = deep_merge_overlay_priority(existing, v);
+                result.insert(k.clone(), merged);
+            }
+            None => {
+                result.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    Value::Object(result)
+}
+
+// 按 overlay 中的键路径从 target 中删除字段（与前端 stripOverlayFields 语义一致）。
+// overlay 在某个键上存在 → 删除；嵌套对象则递归剥离，剥光后空对象也一并删除。
+fn strip_overlay_keys(target: &serde_json::Value, overlay: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    let (target_map, overlay_map) = match (target.as_object(), overlay.as_object()) {
+        (Some(t), Some(o)) => (t, o),
+        _ => return target.clone(),
+    };
+    let mut result = target_map.clone();
+    for (k, v) in overlay_map {
+        let target_child = match result.get(k) {
+            Some(c) => c.clone(),
+            None => continue,
+        };
+        let both_obj = v.is_object() && target_child.is_object();
+        if both_obj {
+            let stripped = strip_overlay_keys(&target_child, v);
+            if stripped.as_object().map_or(false, |m| m.is_empty()) {
+                result.remove(k);
+            } else {
+                result.insert(k.clone(), stripped);
+            }
+        } else {
+            result.remove(k);
+        }
+    }
+    Value::Object(result)
+}
+
+// 检查模型 JSON 是否标记了 cc_start.import_common_config = true
+fn model_has_import_flag(model: &serde_json::Value) -> bool {
+    model
+        .get("cc_start")
+        .and_then(|v| v.get("import_common_config"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+// 给单个模型 JSON 应用通用配置变更：先剥掉旧通用键，再合并新通用（通用赢）
+fn apply_common_to_model(
+    model: &serde_json::Value,
+    old_common: &serde_json::Value,
+    new_common: &serde_json::Value,
+) -> serde_json::Value {
+    let stripped = strip_overlay_keys(model, old_common);
+    deep_merge_overlay_priority(&stripped, new_common)
+}
+
+// 遍历 models_dir 下所有 *.json，对每个标记了 import_common_config:true 的模型
+// 应用 (old_common → new_common) 的差异并写回。返回成功更新的模型数。
+// 单个模型读取 / 解析失败时跳过，不阻塞其他模型，最终在 stderr 打印警告。
+fn cascade_apply_common_in(
+    models_dir: &PathBuf,
+    old_common: &serde_json::Value,
+    new_common: &serde_json::Value,
+) -> u32 {
+    if !models_dir.exists() {
+        return 0;
+    }
+    let entries = match fs::read_dir(models_dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    let mut count = 0u32;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path.extension().map_or(true, |ext| ext != "json") {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[cascade] 读取 {:?} 失败: {}", path, e);
+                continue;
+            }
+        };
+        let mut model: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[cascade] 解析 {:?} 失败: {}", path, e);
+                continue;
+            }
+        };
+        if !model_has_import_flag(&model) {
+            continue;
+        }
+        // 保留 cc_start 元信息，对其余字段做剥离 + 合并
+        let cc_start_meta = model.get("cc_start").cloned();
+        if let Some(obj) = model.as_object_mut() {
+            obj.remove("cc_start");
+        }
+        let mut updated = apply_common_to_model(&model, old_common, new_common);
+        if let (Some(meta), Some(obj)) = (cc_start_meta, updated.as_object_mut()) {
+            obj.insert("cc_start".to_string(), meta);
+        }
+        let pretty = match serde_json::to_string_pretty(&updated) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[cascade] 序列化 {:?} 失败: {}", path, e);
+                continue;
+            }
+        };
+        if let Err(e) = fs::write(&path, pretty) {
+            eprintln!("[cascade] 写回 {:?} 失败: {}", path, e);
+            continue;
+        }
+        count += 1;
+    }
+    count
 }
 
 fn classify_connectivity_response(status_code: u16, elapsed_ms: u64, message: String) -> TestResult {
@@ -693,19 +861,431 @@ fn cleanup_trash(trash_dir: &PathBuf, keep: usize) -> Result<(), String> {
     Ok(())
 }
 
+// ====== 自动备份 ======
+
+// 备份保留份数下限：避免用户误填 0 导致每次备份后立刻被清理。
+// 读 prefs 时若 backup_keep_count 为 0 也按 1 兜底。
+const BACKUP_MIN_KEEP: usize = 1;
+
+fn effective_keep_count(prefs: &UserPrefs) -> usize {
+    if prefs.backup_keep_count == 0 {
+        BACKUP_MIN_KEEP
+    } else {
+        prefs.backup_keep_count as usize
+    }
+}
+
+// 在指定目录下创建一份备份（用于测试时传入临时根目录）
+fn create_backup_in(claude_dir: &PathBuf, backups_root: &PathBuf) -> Result<PathBuf, String> {
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let backup_dir = backups_root.join(&timestamp);
+
+    if backup_dir.exists() {
+        // 同一秒内重复触发：直接返回已存在目录，避免错误
+        return Ok(backup_dir);
+    }
+    fs::create_dir_all(&backup_dir).map_err(|e| format!("创建备份目录失败: {}", e))?;
+
+    // 备份模型配置 ~/.claude/models/*.json
+    let models_dir = claude_dir.join("models");
+    if models_dir.exists() {
+        let dest_models = backup_dir.join("models");
+        fs::create_dir_all(&dest_models).map_err(|e| e.to_string())?;
+        if let Ok(entries) = fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                    if let Some(filename) = path.file_name() {
+                        let _ = fs::copy(&path, dest_models.join(filename));
+                    }
+                }
+            }
+        }
+    }
+
+    // 备份通用配置
+    let common_path = claude_dir.join("cc_start_common_config.json");
+    if common_path.exists() {
+        let _ = fs::copy(&common_path, backup_dir.join("cc_start_common_config.json"));
+    }
+
+    // 备份 GUI 偏好
+    let prefs_path = claude_dir.join("cc_start_prefs.json");
+    if prefs_path.exists() {
+        let _ = fs::copy(&prefs_path, backup_dir.join("cc_start_prefs.json"));
+    }
+
+    Ok(backup_dir)
+}
+
+fn create_backup() -> Result<PathBuf, String> {
+    let claude_dir = get_claude_dir();
+    let backups_root = get_backups_dir();
+    if !backups_root.exists() {
+        fs::create_dir_all(&backups_root).map_err(|e| format!("创建备份根目录失败: {}", e))?;
+    }
+    create_backup_in(&claude_dir, &backups_root)
+}
+
+// 备份目录名前缀：以 .pre-restore- 开头的目录用于"恢复前自动快照"，
+// 不参与自动清理也不计入用户的"保留 N 份"配额，让用户在误恢复后能手动找回。
+const PRE_RESTORE_PREFIX: &str = ".pre-restore-";
+
+fn cleanup_old_backups_in(backups_root: &PathBuf, keep: usize) -> Result<(), String> {
+    if !backups_root.exists() {
+        return Ok(());
+    }
+    let entries = fs::read_dir(backups_root).map_err(|e| e.to_string())?;
+    let mut entries_with_mtime: Vec<(PathBuf, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        // 跳过 pre-restore 快照目录，避免被自动清理删掉
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .map(|name| !name.starts_with(PRE_RESTORE_PREFIX))
+                .unwrap_or(true)
+        })
+        .filter_map(|e| {
+            let path = e.path();
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            Some((path, mtime))
+        })
+        .collect();
+
+    if entries_with_mtime.len() <= keep {
+        return Ok(());
+    }
+
+    entries_with_mtime.sort_by(|a, b| a.1.cmp(&b.1));
+    let to_remove = entries_with_mtime.len().saturating_sub(keep);
+    for (path, _) in entries_with_mtime.iter().take(to_remove) {
+        let _ = fs::remove_dir_all(path);
+    }
+    Ok(())
+}
+
+fn cleanup_old_backups(keep: usize) -> Result<(), String> {
+    cleanup_old_backups_in(&get_backups_dir(), keep)
+}
+
+// 检查并执行一次备份（如果到期）。失败时仅记录到 stderr，不影响其他流程。
+fn tick_backup_if_due() {
+    let prefs = read_prefs_file();
+    if prefs.backup_interval_hours == 0 {
+        return;
+    }
+
+    let now_secs = chrono::Local::now().timestamp();
+    let elapsed = now_secs.saturating_sub(prefs.last_backup_at);
+    let interval_secs = prefs.backup_interval_hours as i64 * 3600;
+    if elapsed < interval_secs {
+        return;
+    }
+
+    match create_backup() {
+        Ok(_) => {
+            let _ = cleanup_old_backups(effective_keep_count(&prefs));
+            // 重新读取 prefs，避免覆盖用户在备份期间修改的其他字段
+            let mut latest = read_prefs_file();
+            latest.last_backup_at = now_secs;
+            if let Err(e) = write_prefs_file(&latest) {
+                eprintln!("[backup] 更新 last_backup_at 失败: {}", e);
+            }
+        }
+        Err(e) => {
+            // 备份失败仅打印日志，不阻塞用户
+            eprintln!("[backup] 自动备份失败: {}", e);
+        }
+    }
+}
+
+// 一次性启动后台调度线程：每 60 秒检查是否到期。读取 prefs 决定行为，
+// 这样用户调整 backup_interval_hours 后无需重启进程。
+static BACKUP_SCHEDULER_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn start_backup_scheduler() {
+    if BACKUP_SCHEDULER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            tick_backup_if_due();
+        }
+    });
+}
+
 #[tauri::command]
 fn get_common_config() -> Result<String, String> {
     Ok(read_common_config_from(&get_common_config_path()))
 }
 
 #[tauri::command]
-fn save_common_config(content: String) -> Result<(), String> {
-    save_common_config_to(&get_common_config_path(), &content)
+fn save_common_config(content: String) -> Result<u32, String> {
+    let common_path = get_common_config_path();
+    // 读取并解析旧通用配置；解析失败按空对象处理，不影响保存
+    let old_text = read_common_config_from(&common_path);
+    let old_common: serde_json::Value = serde_json::from_str(&old_text)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    save_common_config_to(&common_path, &content)?;
+
+    // 解析新通用配置（已通过 save_common_config_to 校验过 JSON 格式）
+    let new_common: serde_json::Value = serde_json::from_str(&content)
+        .unwrap_or_else(|_| serde_json::json!({}));
+
+    // 级联：把所有 cc_start.import_common_config:true 的模型从旧通用切换到新通用
+    let count = cascade_apply_common_in(&get_models_dir(), &old_common, &new_common);
+    Ok(count)
 }
 
 #[tauri::command]
 fn extract_common_config_from_raw(raw_json: String) -> Result<String, String> {
     extract_common_config_candidate(&raw_json)
+}
+
+// 从 ~/.claude/settings.json 提取候选通用配置
+// 复用 strip_excluded_for_common() 排除规则，避免把模型供应商专属字段、
+// API Key、Base URL、模型 ID 等敏感字段写入通用配置。
+#[tauri::command]
+fn extract_common_config_from_settings() -> Result<String, String> {
+    let settings_path = get_claude_dir().join("settings.json");
+    if !settings_path.exists() {
+        return Err("未找到 ~/.claude/settings.json".to_string());
+    }
+
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("读取 settings.json 失败: {}", e))?;
+
+    extract_common_config_candidate(&content)
+}
+
+// 立即手动触发一次备份并清理旧备份。失败时返回错误，方便前端给出提示。
+// 同时把 last_backup_at 更新为当前时间，避免立刻又触发自动备份。
+#[tauri::command]
+fn run_backup_now() -> Result<String, String> {
+    let path = create_backup()?;
+    let prefs = read_prefs_file();
+    let _ = cleanup_old_backups(effective_keep_count(&prefs));
+    let mut latest = read_prefs_file();
+    latest.last_backup_at = chrono::Local::now().timestamp();
+    let _ = write_prefs_file(&latest);
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn open_backups_dir() -> Result<(), String> {
+    let backups_dir = get_backups_dir();
+    if !backups_dir.exists() {
+        fs::create_dir_all(&backups_dir).map_err(|e| e.to_string())?;
+    }
+
+    Command::new("explorer.exe")
+        .arg(backups_dir)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// ====== 备份列表与恢复 ======
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct BackupInfo {
+    // 目录名，例如 20260101-120000 或 .pre-restore-20260101-120000
+    name: String,
+    // 是否为"恢复前自动快照"
+    is_pre_restore: bool,
+    // 该备份内 models/*.json 数量
+    model_count: u32,
+    // 备份目录总大小（字节），仅统计文件层
+    size_bytes: u64,
+    // 目录 mtime 的 Unix 时间戳（秒）
+    created_at: i64,
+}
+
+fn dir_total_size(path: &PathBuf) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = fs::read_dir(path) else { return 0 };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                total += meta.len();
+            } else if meta.is_dir() {
+                total += dir_total_size(&p);
+            }
+        }
+    }
+    total
+}
+
+fn count_model_files(path: &PathBuf) -> u32 {
+    let models = path.join("models");
+    if !models.exists() {
+        return 0;
+    }
+    fs::read_dir(&models)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+                .count() as u32
+        })
+        .unwrap_or(0)
+}
+
+fn list_backups_in(backups_root: &PathBuf) -> Vec<BackupInfo> {
+    if !backups_root.exists() {
+        return Vec::new();
+    }
+    let entries = match fs::read_dir(backups_root) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    // 用原始 SystemTime 参与排序，避免 created_at 仅秒级精度时同秒目录顺序抖动
+    let mut items: Vec<(BackupInfo, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let path = e.path();
+            let name = e.file_name().to_str()?.to_string();
+            let mtime = e.metadata().ok()?.modified().ok()?;
+            let created_at = mtime
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            Some((
+                BackupInfo {
+                    is_pre_restore: name.starts_with(PRE_RESTORE_PREFIX),
+                    name,
+                    model_count: count_model_files(&path),
+                    size_bytes: dir_total_size(&path),
+                    created_at,
+                },
+                mtime,
+            ))
+        })
+        .collect();
+
+    // 时间倒序，最新的在前
+    items.sort_by(|a, b| b.1.cmp(&a.1));
+    items.into_iter().map(|(info, _)| info).collect()
+}
+
+#[tauri::command]
+fn list_backups() -> Result<Vec<BackupInfo>, String> {
+    Ok(list_backups_in(&get_backups_dir()))
+}
+
+// 镜像式恢复指定备份。流程：
+// 1) 把当前状态自动备份到 .pre-restore-<now>/，万一恢复结果不满意还能找回
+// 2) 删除 ~/.claude/models/ 下当前所有 *.json，然后从备份目录复制
+// 3) 用备份中的 cc_start_common_config.json / cc_start_prefs.json 覆盖当前文件
+// 仅对 *.json 操作，不动 ~/.claude 下的其他文件
+fn restore_backup_in(claude_dir: &PathBuf, backups_root: &PathBuf, name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("备份名称不能为空".to_string());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("备份名称非法".to_string());
+    }
+
+    let source_dir = backups_root.join(name);
+    if !source_dir.exists() || !source_dir.is_dir() {
+        return Err(format!("备份不存在: {}", name));
+    }
+
+    // 1) 先自动快照当前状态
+    let pre_restore_name = format!(
+        "{}{}",
+        PRE_RESTORE_PREFIX,
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    );
+    let pre_restore_dir = backups_root.join(&pre_restore_name);
+    if !backups_root.exists() {
+        fs::create_dir_all(backups_root).map_err(|e| format!("创建备份根目录失败: {}", e))?;
+    }
+    // 复用 create_backup_in 的实现：传入当前 claude_dir 但目标根换成单次目录
+    // 这里简单内联：直接调用 create_backup_in 然后 rename 不可行（时间戳可能撞），
+    // 改为把 backups_root 传给 create_backup_in 后取它返回的路径即可。
+    // 注意 create_backup_in 内部用 chrono::Local 生成时间戳，与 pre_restore_name 时间戳不同名。
+    // 因此这里不复用，改为手动复制三类文件。
+    fs::create_dir_all(&pre_restore_dir).map_err(|e| format!("创建快照目录失败: {}", e))?;
+
+    let cur_models = claude_dir.join("models");
+    if cur_models.exists() {
+        let snap_models = pre_restore_dir.join("models");
+        fs::create_dir_all(&snap_models).map_err(|e| e.to_string())?;
+        if let Ok(entries) = fs::read_dir(&cur_models) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                    if let Some(filename) = path.file_name() {
+                        let _ = fs::copy(&path, snap_models.join(filename));
+                    }
+                }
+            }
+        }
+    }
+    let cur_common = claude_dir.join("cc_start_common_config.json");
+    if cur_common.exists() {
+        let _ = fs::copy(&cur_common, pre_restore_dir.join("cc_start_common_config.json"));
+    }
+    let cur_prefs = claude_dir.join("cc_start_prefs.json");
+    if cur_prefs.exists() {
+        let _ = fs::copy(&cur_prefs, pre_restore_dir.join("cc_start_prefs.json"));
+    }
+
+    // 2) 镜像恢复 models：清空当前 *.json，再从备份复制
+    let target_models = claude_dir.join("models");
+    if !target_models.exists() {
+        fs::create_dir_all(&target_models).map_err(|e| e.to_string())?;
+    }
+    if let Ok(entries) = fs::read_dir(&target_models) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+    let source_models = source_dir.join("models");
+    if source_models.exists() {
+        if let Ok(entries) = fs::read_dir(&source_models) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                    if let Some(filename) = path.file_name() {
+                        fs::copy(&path, target_models.join(filename))
+                            .map_err(|e| format!("复制 {:?} 失败: {}", filename, e))?;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) 通用配置 / 偏好文件直接覆盖（备份里没有就保留当前，不主动删除）
+    let source_common = source_dir.join("cc_start_common_config.json");
+    if source_common.exists() {
+        fs::copy(&source_common, claude_dir.join("cc_start_common_config.json"))
+            .map_err(|e| format!("恢复通用配置失败: {}", e))?;
+    }
+    let source_prefs = source_dir.join("cc_start_prefs.json");
+    if source_prefs.exists() {
+        fs::copy(&source_prefs, claude_dir.join("cc_start_prefs.json"))
+            .map_err(|e| format!("恢复偏好失败: {}", e))?;
+    }
+
+    Ok(pre_restore_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn restore_backup(name: String) -> Result<String, String> {
+    restore_backup_in(&get_claude_dir(), &get_backups_dir(), &name)
 }
 
 #[cfg(test)]
@@ -877,6 +1457,18 @@ mod tests {
     }
 
     #[test]
+    fn strip_excluded_removes_cc_start_metadata() {
+        let mut value: serde_json::Value = serde_json::from_str(
+            r#"{"cc_start":{"import_common_config":true},"hooks":{"a":1}}"#
+        ).unwrap();
+        strip_excluded_for_common(&mut value);
+        let obj = value.as_object().unwrap();
+        assert!(!obj.contains_key("cc_start"));
+        // hooks 等通用字段应保留
+        assert_eq!(obj.get("hooks"), Some(&serde_json::json!({"a":1})));
+    }
+
+    #[test]
     fn extract_common_config_invalid_json_returns_error() {
         let result = extract_common_config_candidate("not json");
         assert!(result.is_err());
@@ -993,10 +1585,473 @@ mod tests {
     }
 
 
+    // ====== 自动备份 ======
+
+    fn unique_temp_dir(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("cc_start_backup_{}_{}_{}", tag, std::process::id(), nanos))
+    }
+
+    fn setup_fake_claude_dir(claude_dir: &PathBuf) {
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        fs::write(
+            claude_dir.join("models").join("alpha.json"),
+            r#"{"display_name":"Alpha"}"#,
+        ).unwrap();
+        fs::write(
+            claude_dir.join("models").join("beta.json"),
+            r#"{"display_name":"Beta"}"#,
+        ).unwrap();
+        fs::write(
+            claude_dir.join("cc_start_common_config.json"),
+            r#"{"hooks":{}}"#,
+        ).unwrap();
+        fs::write(
+            claude_dir.join("cc_start_prefs.json"),
+            r#"{"remember_model":true,"last_alias":""}"#,
+        ).unwrap();
+    }
+
+    #[test]
+    fn create_backup_copies_models_common_and_prefs() {
+        let claude_dir = unique_temp_dir("create");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        setup_fake_claude_dir(&claude_dir);
+
+        let backup_dir = create_backup_in(&claude_dir, &backups_root).unwrap();
+        assert!(backup_dir.exists());
+        assert!(backup_dir.join("models").join("alpha.json").exists());
+        assert!(backup_dir.join("models").join("beta.json").exists());
+        assert!(backup_dir.join("cc_start_common_config.json").exists());
+        assert!(backup_dir.join("cc_start_prefs.json").exists());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn create_backup_works_when_only_some_files_exist() {
+        let claude_dir = unique_temp_dir("partial");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        // 仅存在 models 目录，无通用配置和偏好文件
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        fs::write(
+            claude_dir.join("models").join("only.json"),
+            r#"{"display_name":"Only"}"#,
+        ).unwrap();
+
+        let backup_dir = create_backup_in(&claude_dir, &backups_root).unwrap();
+        assert!(backup_dir.join("models").join("only.json").exists());
+        assert!(!backup_dir.join("cc_start_common_config.json").exists());
+        assert!(!backup_dir.join("cc_start_prefs.json").exists());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn cleanup_old_backups_keeps_latest_n() {
+        let backups_root = unique_temp_dir("cleanup");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+
+        // 创建 5 个时间戳目录，模拟历史备份
+        let names = ["20260101-000001", "20260102-000001", "20260103-000001", "20260104-000001", "20260105-000001"];
+        for name in &names {
+            let dir = backups_root.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("marker"), name).unwrap();
+            // 间隔短暂延迟，让 mtime 顺序与名称顺序一致
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        cleanup_old_backups_in(&backups_root, 3).unwrap();
+
+        // 仅保留最近 3 个（最新 mtime 的）
+        let kept: Vec<String> = fs::read_dir(&backups_root).unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        assert_eq!(kept.len(), 3);
+        assert!(kept.contains(&"20260103-000001".to_string()));
+        assert!(kept.contains(&"20260104-000001".to_string()));
+        assert!(kept.contains(&"20260105-000001".to_string()));
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    #[test]
+    fn cleanup_old_backups_no_op_when_under_limit() {
+        let backups_root = unique_temp_dir("cleanup_under");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+        fs::create_dir_all(backups_root.join("20260101-000001")).unwrap();
+        fs::create_dir_all(backups_root.join("20260102-000001")).unwrap();
+
+        cleanup_old_backups_in(&backups_root, 5).unwrap();
+
+        let count = fs::read_dir(&backups_root).unwrap().count();
+        assert_eq!(count, 2);
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    #[test]
+    fn cleanup_old_backups_no_op_when_dir_missing() {
+        let backups_root = unique_temp_dir("cleanup_missing");
+        let _ = fs::remove_dir_all(&backups_root);
+        // 不创建目录
+        let result = cleanup_old_backups_in(&backups_root, 5);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn user_prefs_default_backup_interval_is_24() {
+        let prefs = default_prefs();
+        assert_eq!(prefs.backup_interval_hours, 24);
+        assert_eq!(prefs.last_backup_at, 0);
+    }
+
+    #[test]
+    fn user_prefs_deserialize_legacy_without_backup_fields() {
+        // 旧版本 prefs 文件没有 backup_interval_hours，反序列化时应使用默认值
+        let legacy = r#"{"remember_model":true,"last_alias":"kimi"}"#;
+        let prefs: UserPrefs = serde_json::from_str(legacy).unwrap();
+        assert_eq!(prefs.remember_model, true);
+        assert_eq!(prefs.last_alias, "kimi");
+        assert_eq!(prefs.backup_interval_hours, 24);
+        assert_eq!(prefs.last_backup_at, 0);
+    }
+
+    #[test]
+    fn user_prefs_deserialize_with_backup_off() {
+        let json = r#"{"remember_model":false,"last_alias":"","backup_interval_hours":0,"last_backup_at":1700000000}"#;
+        let prefs: UserPrefs = serde_json::from_str(json).unwrap();
+        assert_eq!(prefs.backup_interval_hours, 0);
+        assert_eq!(prefs.last_backup_at, 1700000000);
+    }
+
+    #[test]
+    fn user_prefs_default_backup_keep_count_is_20() {
+        let prefs = default_prefs();
+        assert_eq!(prefs.backup_keep_count, 20);
+    }
+
+    #[test]
+    fn user_prefs_legacy_without_keep_count_uses_default() {
+        let legacy = r#"{"remember_model":true,"last_alias":""}"#;
+        let prefs: UserPrefs = serde_json::from_str(legacy).unwrap();
+        assert_eq!(prefs.backup_keep_count, 20);
+    }
+
+    #[test]
+    fn effective_keep_count_clamps_zero_to_one() {
+        let mut prefs = default_prefs();
+        prefs.backup_keep_count = 0;
+        assert_eq!(effective_keep_count(&prefs), 1);
+        prefs.backup_keep_count = 50;
+        assert_eq!(effective_keep_count(&prefs), 50);
+    }
+
+    #[test]
+    fn cleanup_old_backups_skips_pre_restore_directories() {
+        let backups_root = unique_temp_dir("cleanup_skip_pre_restore");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+
+        // 5 个常规备份 + 2 个 pre-restore，keep=1 时应只保留 1 个常规 + 全部 pre-restore
+        for name in &["20260101-000001", "20260102-000001", "20260103-000001", "20260104-000001", "20260105-000001"] {
+            fs::create_dir_all(backups_root.join(name)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for name in &[".pre-restore-20260101-120000", ".pre-restore-20260102-120000"] {
+            fs::create_dir_all(backups_root.join(name)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        cleanup_old_backups_in(&backups_root, 1).unwrap();
+
+        let entries: Vec<String> = fs::read_dir(&backups_root).unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+
+        let pre_restore_count = entries.iter().filter(|n| n.starts_with(PRE_RESTORE_PREFIX)).count();
+        let regular_count = entries.iter().filter(|n| !n.starts_with(PRE_RESTORE_PREFIX)).count();
+        assert_eq!(pre_restore_count, 2, "pre-restore 目录不能被自动清理");
+        assert_eq!(regular_count, 1, "常规备份按 keep 保留最近 1 份");
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    // ====== 备份列表与恢复 ======
+
+    fn make_backup_dir(backups_root: &PathBuf, name: &str, model_files: &[(&str, &str)]) {
+        let dir = backups_root.join(name);
+        fs::create_dir_all(dir.join("models")).unwrap();
+        for (filename, content) in model_files {
+            fs::write(dir.join("models").join(filename), content).unwrap();
+        }
+    }
+
+    #[test]
+    fn list_backups_returns_empty_when_dir_missing() {
+        let backups_root = unique_temp_dir("list_missing");
+        let _ = fs::remove_dir_all(&backups_root);
+        let infos = list_backups_in(&backups_root);
+        assert!(infos.is_empty());
+    }
+
+    #[test]
+    fn list_backups_returns_metadata_sorted_newest_first() {
+        let backups_root = unique_temp_dir("list_sorted");
+        let _ = fs::remove_dir_all(&backups_root);
+        fs::create_dir_all(&backups_root).unwrap();
+        make_backup_dir(&backups_root, "20260101-000001", &[("a.json", "{}"), ("b.json", "{}")]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        make_backup_dir(&backups_root, "20260102-000001", &[("a.json", "{}"), ("b.json", "{}"), ("c.json", "{}")]);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        make_backup_dir(&backups_root, ".pre-restore-20260102-120000", &[("a.json", "{}")]);
+
+        let infos = list_backups_in(&backups_root);
+        assert_eq!(infos.len(), 3);
+        assert_eq!(infos[0].name, ".pre-restore-20260102-120000");
+        assert!(infos[0].is_pre_restore);
+        assert_eq!(infos[1].name, "20260102-000001");
+        assert_eq!(infos[1].model_count, 3);
+        assert_eq!(infos[2].name, "20260101-000001");
+        assert_eq!(infos[2].model_count, 2);
+        assert!(!infos[1].is_pre_restore);
+
+        let _ = fs::remove_dir_all(&backups_root);
+    }
+
+    #[test]
+    fn restore_backup_mirror_replaces_models_and_creates_pre_restore() {
+        let claude_dir = unique_temp_dir("restore_mirror");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        fs::write(claude_dir.join("models").join("current_only.json"), r#"{"display_name":"current_only"}"#).unwrap();
+        fs::write(claude_dir.join("models").join("shared.json"), r#"{"display_name":"current_shared"}"#).unwrap();
+        fs::write(claude_dir.join("cc_start_common_config.json"), r#"{"hooks":{"current":1}}"#).unwrap();
+
+        // 创建一份目标备份：只包含 shared.json + new_only.json
+        fs::create_dir_all(&backups_root).unwrap();
+        make_backup_dir(&backups_root, "20260101-000001", &[
+            ("shared.json", r#"{"display_name":"backup_shared"}"#),
+            ("new_only.json", r#"{"display_name":"backup_new_only"}"#),
+        ]);
+        fs::write(backups_root.join("20260101-000001").join("cc_start_common_config.json"),
+                  r#"{"hooks":{"backup":1}}"#).unwrap();
+
+        let pre_restore_path = restore_backup_in(&claude_dir, &backups_root, "20260101-000001").unwrap();
+        let pre_restore_dir = PathBuf::from(&pre_restore_path);
+
+        // 镜像式恢复：current_only 不再存在，shared 内容来自备份，new_only 新出现
+        let cur_models = claude_dir.join("models");
+        assert!(!cur_models.join("current_only.json").exists(), "镜像式恢复应删除当前多出的模型");
+        assert!(cur_models.join("shared.json").exists());
+        assert!(cur_models.join("new_only.json").exists());
+        let shared_text = fs::read_to_string(cur_models.join("shared.json")).unwrap();
+        assert!(shared_text.contains("backup_shared"), "shared.json 应被备份内容覆盖");
+        let common_text = fs::read_to_string(claude_dir.join("cc_start_common_config.json")).unwrap();
+        assert!(common_text.contains("\"backup\""));
+
+        // pre-restore 快照应保存恢复前的所有原始文件
+        assert!(pre_restore_dir.join("models").join("current_only.json").exists());
+        assert!(pre_restore_dir.join("models").join("shared.json").exists());
+        let snap_shared = fs::read_to_string(pre_restore_dir.join("models").join("shared.json")).unwrap();
+        assert!(snap_shared.contains("current_shared"), "pre-restore 应保留恢复前的 shared 内容");
+        assert!(pre_restore_dir.join("cc_start_common_config.json").exists());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn restore_backup_rejects_invalid_name() {
+        let claude_dir = unique_temp_dir("restore_invalid");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&backups_root).unwrap();
+
+        assert!(restore_backup_in(&claude_dir, &backups_root, "").is_err());
+        assert!(restore_backup_in(&claude_dir, &backups_root, "../etc").is_err());
+        assert!(restore_backup_in(&claude_dir, &backups_root, "a/b").is_err());
+        assert!(restore_backup_in(&claude_dir, &backups_root, "non_existent").is_err());
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn restore_backup_preserves_current_files_when_backup_omits_them() {
+        let claude_dir = unique_temp_dir("restore_partial");
+        let backups_root = claude_dir.join("cc_start_backups");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(claude_dir.join("models")).unwrap();
+        // 当前有通用配置和偏好
+        fs::write(claude_dir.join("cc_start_common_config.json"), r#"{"keep":1}"#).unwrap();
+        fs::write(claude_dir.join("cc_start_prefs.json"), r#"{"remember_model":true,"last_alias":"keep"}"#).unwrap();
+
+        fs::create_dir_all(&backups_root).unwrap();
+        // 备份只有 models，没有通用配置和偏好
+        make_backup_dir(&backups_root, "20260101-000001", &[("only.json", "{}")]);
+
+        restore_backup_in(&claude_dir, &backups_root, "20260101-000001").unwrap();
+
+        // 当前通用配置和偏好应保留
+        let common_text = fs::read_to_string(claude_dir.join("cc_start_common_config.json")).unwrap();
+        assert!(common_text.contains("\"keep\""));
+        let prefs_text = fs::read_to_string(claude_dir.join("cc_start_prefs.json")).unwrap();
+        assert!(prefs_text.contains("keep"));
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    // ====== 通用配置级联同步 ======
+
+    #[test]
+    fn deep_merge_overlay_priority_overlay_wins() {
+        let base = serde_json::json!({"a":1, "b":{"x":1, "y":1}, "c":{"only_base":true}});
+        let overlay = serde_json::json!({"a":2, "b":{"x":99}, "d":42});
+        let merged = deep_merge_overlay_priority(&base, &overlay);
+        assert_eq!(merged["a"], serde_json::json!(2));        // overlay wins
+        assert_eq!(merged["b"]["x"], serde_json::json!(99));  // 嵌套 overlay wins
+        assert_eq!(merged["b"]["y"], serde_json::json!(1));   // base 保留
+        assert_eq!(merged["c"]["only_base"], serde_json::json!(true)); // overlay 没有保留
+        assert_eq!(merged["d"], serde_json::json!(42));       // overlay 新增
+    }
+
+    #[test]
+    fn strip_overlay_keys_removes_matching_paths() {
+        let target = serde_json::json!({
+            "a": 1,
+            "b": {"x": 1, "y": 1},
+            "c": "keep",
+            "env": {"KEY1": "v1", "KEY2": "v2"}
+        });
+        let overlay = serde_json::json!({
+            "a": 99,
+            "b": {"x": 99},
+            "env": {"KEY1": "any"}
+        });
+        let stripped = strip_overlay_keys(&target, &overlay);
+        assert!(stripped.get("a").is_none());           // 顶层删除
+        assert!(stripped["b"].get("x").is_none());       // 嵌套删除
+        assert_eq!(stripped["b"]["y"], serde_json::json!(1)); // 嵌套保留
+        assert_eq!(stripped["c"], serde_json::json!("keep"));
+        assert!(stripped["env"].get("KEY1").is_none());
+        assert_eq!(stripped["env"]["KEY2"], serde_json::json!("v2"));
+    }
+
+    #[test]
+    fn strip_overlay_keys_removes_emptied_subtrees() {
+        let target = serde_json::json!({"only": {"x": 1, "y": 2}});
+        let overlay = serde_json::json!({"only": {"x": 0, "y": 0}});
+        let stripped = strip_overlay_keys(&target, &overlay);
+        assert!(stripped.get("only").is_none(), "子树被剥光后应删除空对象");
+    }
+
+    #[test]
+    fn cascade_skips_models_without_import_flag() {
+        let claude_dir = unique_temp_dir("cascade_skip");
+        let models_dir = claude_dir.join("models");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&models_dir).unwrap();
+
+        // model A: 未勾选导入
+        fs::write(
+            models_dir.join("a.json"),
+            r#"{"display_name":"A","env":{"ANTHROPIC_BASE_URL":"https://a"},"hooks":{"old":1}}"#,
+        ).unwrap();
+        // model B: 勾选导入
+        fs::write(
+            models_dir.join("b.json"),
+            r#"{"display_name":"B","cc_start":{"import_common_config":true},"hooks":{"old":1}}"#,
+        ).unwrap();
+
+        let old_common = serde_json::json!({"hooks":{"old":1}});
+        let new_common = serde_json::json!({"hooks":{"new":1}});
+        let count = cascade_apply_common_in(&models_dir, &old_common, &new_common);
+        assert_eq!(count, 1);
+
+        let a_text = fs::read_to_string(models_dir.join("a.json")).unwrap();
+        assert!(a_text.contains("\"old\""), "未勾选模型不应被改动");
+        assert!(!a_text.contains("\"new\""));
+
+        let b_text = fs::read_to_string(models_dir.join("b.json")).unwrap();
+        assert!(b_text.contains("\"new\""), "勾选模型应应用新通用配置");
+        assert!(!b_text.contains("\"old\""), "勾选模型应剥掉旧通用键");
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn cascade_preserves_model_private_and_cc_start_meta() {
+        let claude_dir = unique_temp_dir("cascade_preserve");
+        let models_dir = claude_dir.join("models");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&models_dir).unwrap();
+
+        fs::write(
+            models_dir.join("b.json"),
+            r#"{"display_name":"B","working_dir":"D:/my","mode":"skip-permissions","env":{"ANTHROPIC_AUTH_TOKEN":"secret","ANTHROPIC_BASE_URL":"https://b","ANTHROPIC_MODEL":"claude"},"cc_start":{"import_common_config":true},"hooks":{"old":1}}"#,
+        ).unwrap();
+
+        let old_common = serde_json::json!({"hooks":{"old":1}});
+        let new_common = serde_json::json!({"hooks":{"new":2}, "permissions":{"allow":["Bash"]}});
+        cascade_apply_common_in(&models_dir, &old_common, &new_common);
+
+        let text = fs::read_to_string(models_dir.join("b.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        // 模型私有字段保留
+        assert_eq!(json["display_name"], serde_json::json!("B"));
+        assert_eq!(json["working_dir"], serde_json::json!("D:/my"));
+        assert_eq!(json["mode"], serde_json::json!("skip-permissions"));
+        assert_eq!(json["env"]["ANTHROPIC_AUTH_TOKEN"], serde_json::json!("secret"));
+        assert_eq!(json["env"]["ANTHROPIC_BASE_URL"], serde_json::json!("https://b"));
+        assert_eq!(json["env"]["ANTHROPIC_MODEL"], serde_json::json!("claude"));
+        // cc_start 元信息保留
+        assert_eq!(json["cc_start"]["import_common_config"], serde_json::json!(true));
+        // 新通用配置已合并
+        assert_eq!(json["hooks"]["new"], serde_json::json!(2));
+        assert!(json["hooks"].get("old").is_none(), "旧通用键已被剥掉");
+        assert_eq!(json["permissions"]["allow"][0], serde_json::json!("Bash"));
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn cascade_handles_invalid_model_json_gracefully() {
+        let claude_dir = unique_temp_dir("cascade_invalid");
+        let models_dir = claude_dir.join("models");
+        let _ = fs::remove_dir_all(&claude_dir);
+        fs::create_dir_all(&models_dir).unwrap();
+
+        // 损坏的 JSON 不应导致整个级联失败，仅跳过该模型
+        fs::write(models_dir.join("broken.json"), r#"{not valid json"#).unwrap();
+        fs::write(
+            models_dir.join("ok.json"),
+            r#"{"cc_start":{"import_common_config":true},"hooks":{"old":1}}"#,
+        ).unwrap();
+
+        let old_common = serde_json::json!({"hooks":{"old":1}});
+        let new_common = serde_json::json!({"hooks":{"new":1}});
+        let count = cascade_apply_common_in(&models_dir, &old_common, &new_common);
+        assert_eq!(count, 1, "损坏文件被跳过，正常文件继续处理");
+
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    start_backup_scheduler();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -1014,7 +2069,12 @@ pub fn run() {
             test_connectivity,
             get_common_config,
             save_common_config,
-            extract_common_config_from_raw
+            extract_common_config_from_raw,
+            extract_common_config_from_settings,
+            run_backup_now,
+            open_backups_dir,
+            list_backups,
+            restore_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

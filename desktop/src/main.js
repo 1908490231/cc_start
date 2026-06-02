@@ -10,7 +10,10 @@ let prefs = {
   remember_model: true,
   last_alias: '',
   pinned_aliases: [],
-  custom_order: []
+  custom_order: [],
+  backup_interval_hours: 24,
+  last_backup_at: 0,
+  backup_keep_count: 20
 };
 
 const configList = document.getElementById('config-list');
@@ -55,7 +58,10 @@ async function loadPrefs() {
       remember_model: true,
       last_alias: '',
       pinned_aliases: [],
-      custom_order: []
+      custom_order: [],
+      backup_interval_hours: 24,
+      last_backup_at: 0,
+      backup_keep_count: 20
     };
   }
 }
@@ -304,6 +310,19 @@ function openEditForModel(model) {
     }
   }
 
+  // 读取 cc_start 元信息（仅本桌面端使用），然后从展示态 JSON 中剥离，
+  // 避免编辑器把内部状态字段直接暴露给用户。保存时由 saveCurrentConfig 重新注入。
+  let importCommonEnabled = false;
+  if (originalJson && typeof originalJson === 'object' && !Array.isArray(originalJson)) {
+    const meta = originalJson.cc_start;
+    if (meta && typeof meta === 'object') {
+      importCommonEnabled = !!meta.import_common_config;
+    }
+    if ('cc_start' in originalJson) {
+      delete originalJson.cc_start;
+    }
+  }
+
   currentEditingModel = {
     ...model,
     api_key: apiKeyValue,
@@ -311,7 +330,7 @@ function openEditForModel(model) {
     _authMode: model.auth_mode || 'AUTH_TOKEN',
     _isNew: false,
     _originalJson: originalJson,
-    _importCommonEnabled: false,
+    _importCommonEnabled: importCommonEnabled,
     _preImportSnapshot: null,
     haiku_model: model.haiku_model || '',
     opus_model: model.opus_model || '',
@@ -768,11 +787,11 @@ function renderDetailForm() {
     syncConfigEditorLayout();
   });
 
-  // 切回详情页时，若该模型上次在导入预览态，恢复 UI 并重新合并最新通用配置
-  const importToggle = document.getElementById('detail-import-common-toggle');
-  if (importToggle && currentEditingModel._importCommonEnabled) {
-    importToggle.checked = true;
-    regenerateImportPreview();
+  // 切回详情页时，若该模型上次保存为"已导入通用配置"，自动用最新通用配置合并预览。
+  // 不写入 _preImportSnapshot：取消勾选时走"无快照"路径，按当前通用配置字段精确删除，
+  // 既能去掉本次导入带进来的字段，又能保留用户在编辑器里手写的非通用字段。
+  if (currentEditingModel._importCommonEnabled) {
+    applyImportOnOpenIfNeeded();
   }
 }
 
@@ -786,10 +805,51 @@ function showDetailPage() {
 }
 
 function renderSettingsPage() {
+  const interval = Number.isFinite(prefs.backup_interval_hours) ? prefs.backup_interval_hours : 24;
+  const keepCount = Number.isFinite(prefs.backup_keep_count) && prefs.backup_keep_count > 0
+    ? prefs.backup_keep_count
+    : 20;
+  const lastBackupAt = prefs.last_backup_at || 0;
+  const lastBackupText = lastBackupAt > 0
+    ? new Date(lastBackupAt * 1000).toLocaleString()
+    : '尚未备份';
+
   settingsContent.innerHTML = `
     <div class="settings-card">
       <h3 class="settings-section-title">显示</h3>
       <label class="settings-checkbox"><input type="checkbox" id="remember-model" ${prefs.remember_model ? 'checked' : ''}> 高亮上次启动的配置</label>
+    </div>
+
+    <div class="settings-card">
+      <h3 class="settings-section-title">自动备份</h3>
+      <label class="settings-form-row">
+        <span>备份频率</span>
+        <select id="backup-interval">
+          <option value="0" ${interval === 0 ? 'selected' : ''}>关闭</option>
+          <option value="1" ${interval === 1 ? 'selected' : ''}>每 1 小时</option>
+          <option value="6" ${interval === 6 ? 'selected' : ''}>每 6 小时</option>
+          <option value="24" ${interval === 24 ? 'selected' : ''}>每 24 小时</option>
+          <option value="168" ${interval === 168 ? 'selected' : ''}>每 7 天</option>
+        </select>
+      </label>
+      <label class="settings-form-row">
+        <span>保留份数</span>
+        <select id="backup-keep-count">
+          <option value="20" ${keepCount === 20 ? 'selected' : ''}>最近 20 份</option>
+          <option value="50" ${keepCount === 50 ? 'selected' : ''}>最近 50 份</option>
+          <option value="100" ${keepCount === 100 ? 'selected' : ''}>最近 100 份</option>
+        </select>
+      </label>
+      <div class="settings-about-item">备份目录：~/.claude/cc_start_backups/，恢复前快照（.pre-restore-）不计入保留份数</div>
+      <div class="settings-about-item">上次备份时间：${lastBackupText}</div>
+      <div class="settings-form-row settings-form-row-actions">
+        <button type="button" class="btn-edit" id="run-backup-now-btn">立即备份一次</button>
+        <button type="button" class="btn-edit" id="open-backups-dir-btn">打开备份目录</button>
+        <button type="button" class="btn-edit" id="refresh-backups-btn">刷新列表</button>
+      </div>
+      <div class="backup-list" id="backup-list">
+        <div class="backup-list-loading">加载中...</div>
+      </div>
     </div>
 
     <div class="settings-card">
@@ -801,6 +861,7 @@ function renderSettingsPage() {
 
   bindSettingsEvents();
   loadSettingsMeta();
+  loadBackupList();
 }
 
 function bindSettingsEvents() {
@@ -812,6 +873,69 @@ function bindSettingsEvents() {
     renderConfigList(searchBox.value || '');
     showToast('设置已保存');
   });
+
+  const backupInterval = document.getElementById('backup-interval');
+  if (backupInterval) {
+    backupInterval.addEventListener('change', async () => {
+      const value = parseInt(backupInterval.value, 10) || 0;
+      try {
+        await persistPrefs({ backup_interval_hours: value });
+        showToast(value === 0 ? '已关闭自动备份' : `已设置为每 ${value} 小时备份一次`);
+      } catch (err) {
+        showToast('保存失败: ' + err);
+      }
+    });
+  }
+
+  const runBackupNowBtn = document.getElementById('run-backup-now-btn');
+  if (runBackupNowBtn) {
+    runBackupNowBtn.addEventListener('click', async () => {
+      runBackupNowBtn.disabled = true;
+      const originalText = runBackupNowBtn.textContent;
+      runBackupNowBtn.textContent = '备份中...';
+      try {
+        const path = await invoke('run_backup_now');
+        showToast('已备份到：' + path);
+        // 刷新偏好与设置页（last_backup_at 由后端写回）
+        await loadPrefs();
+        renderSettingsPage();
+      } catch (err) {
+        showToast('备份失败: ' + err);
+      } finally {
+        runBackupNowBtn.disabled = false;
+        runBackupNowBtn.textContent = originalText;
+      }
+    });
+  }
+
+  const openBackupsDirBtn = document.getElementById('open-backups-dir-btn');
+  if (openBackupsDirBtn) {
+    openBackupsDirBtn.addEventListener('click', async () => {
+      try {
+        await invoke('open_backups_dir');
+      } catch (err) {
+        showToast('打开备份目录失败: ' + err);
+      }
+    });
+  }
+
+  const backupKeepCount = document.getElementById('backup-keep-count');
+  if (backupKeepCount) {
+    backupKeepCount.addEventListener('change', async () => {
+      const value = parseInt(backupKeepCount.value, 10) || 20;
+      try {
+        await persistPrefs({ backup_keep_count: value });
+        showToast(`保留份数已改为最近 ${value} 份`);
+      } catch (err) {
+        showToast('保存失败: ' + err);
+      }
+    });
+  }
+
+  const refreshBackupsBtn = document.getElementById('refresh-backups-btn');
+  if (refreshBackupsBtn) {
+    refreshBackupsBtn.addEventListener('click', () => loadBackupList());
+  }
 }
 
 async function loadSettingsMeta() {
@@ -830,6 +954,98 @@ async function loadSettingsMeta() {
     claudeVersionEl.textContent = claudeVersion;
   } catch (err) {
     claudeVersionEl.textContent = '读取失败';
+  }
+}
+
+function formatBackupSize(bytes) {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function escapeAttr(text) {
+  return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function loadBackupList() {
+  const listEl = document.getElementById('backup-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="backup-list-loading">加载中...</div>';
+
+  let infos;
+  try {
+    infos = await invoke('list_backups');
+  } catch (err) {
+    listEl.innerHTML = `<div class="backup-list-empty">读取备份列表失败：${escapeAttr(err)}</div>`;
+    return;
+  }
+
+  if (!infos || infos.length === 0) {
+    listEl.innerHTML = '<div class="backup-list-empty">尚无备份记录</div>';
+    return;
+  }
+
+  const rows = infos.map(info => {
+    const created = info.created_at > 0
+      ? new Date(info.created_at * 1000).toLocaleString()
+      : '-';
+    const tag = info.is_pre_restore
+      ? '<span class="backup-tag tag-pre-restore">恢复前快照</span>'
+      : '<span class="backup-tag tag-regular">备份</span>';
+    return `
+      <div class="backup-row" data-name="${escapeAttr(info.name)}">
+        <div class="backup-row-main">
+          <div class="backup-row-title">
+            ${tag}
+            <span class="backup-row-name">${escapeAttr(info.name)}</span>
+          </div>
+          <div class="backup-row-meta">
+            ${created} · ${info.model_count} 个模型 · ${formatBackupSize(info.size_bytes)}
+          </div>
+        </div>
+        <button type="button" class="btn-edit btn-restore" data-action="restore">恢复此备份</button>
+      </div>
+    `;
+  }).join('');
+
+  listEl.innerHTML = rows;
+
+  listEl.querySelectorAll('[data-action="restore"]').forEach(btn => {
+    btn.addEventListener('click', handleRestoreBackup);
+  });
+}
+
+async function handleRestoreBackup(e) {
+  const row = e.target.closest('.backup-row');
+  if (!row) return;
+  const name = row.dataset.name;
+  if (!name) return;
+
+  const confirmed = await confirmDialog(
+    `确认恢复备份「${name}」？\n\n` +
+    `镜像式恢复：当前 ~/.claude/models/ 下的模型配置会被备份内容完全替换，` +
+    `当前多出而备份中没有的模型会被删除。\n\n` +
+    `恢复前会先把当前状态自动备份到 .pre-restore-* 目录，万一出问题可以从那里找回。`,
+    { title: '确认恢复', kind: 'warning' }
+  );
+  if (!confirmed) return;
+
+  const restoreBtn = e.target;
+  const originalText = restoreBtn.textContent;
+  restoreBtn.disabled = true;
+  restoreBtn.textContent = '恢复中...';
+
+  try {
+    const preRestorePath = await invoke('restore_backup', { name });
+    showToast(`恢复完成。原状态已保存到：${preRestorePath}`);
+    // 重新加载偏好（备份里的 prefs 已覆盖当前），刷新列表与设置页
+    await loadPrefs();
+    await loadModels();
+    renderSettingsPage();
+  } catch (err) {
+    showToast('恢复失败: ' + err);
+    restoreBtn.disabled = false;
+    restoreBtn.textContent = originalText;
   }
 }
 
@@ -1233,8 +1449,28 @@ async function saveCurrentConfig(closeAfter = true) {
   let raw_json = '';
   if (rawText.trim()) {
     try {
-      JSON.parse(rawText);
-      raw_json = rawText;
+      const parsed = JSON.parse(rawText);
+      // 根据当前"导入通用配置"勾选状态，注入或清理 cc_start.import_common_config 元信息。
+      // 这里以 _importCommonEnabled 为准（受 toggle change 事件维护），保存时再写到 JSON。
+      // _originalJson 已在 openEditForModel 中剥离了 cc_start，所以编辑器里看不到这个字段，
+      // 但保存时仍然会把它写回模型配置文件，让下次打开时恢复"已导入"状态。
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const importEnabled = !!currentEditingModel._importCommonEnabled;
+        if (importEnabled) {
+          if (!parsed.cc_start || typeof parsed.cc_start !== 'object' || Array.isArray(parsed.cc_start)) {
+            parsed.cc_start = {};
+          }
+          parsed.cc_start.import_common_config = true;
+        } else if (parsed.cc_start && typeof parsed.cc_start === 'object' && !Array.isArray(parsed.cc_start)) {
+          delete parsed.cc_start.import_common_config;
+          if (Object.keys(parsed.cc_start).length === 0) {
+            delete parsed.cc_start;
+          }
+        }
+        raw_json = JSON.stringify(parsed, null, 2);
+      } else {
+        raw_json = rawText;
+      }
       if (errorEl) errorEl.textContent = '';
     } catch (e) {
       if (errorEl) errorEl.textContent = 'JSON 格式错误: ' + e.message;
@@ -1453,6 +1689,40 @@ async function regenerateImportPreview() {
   }
 }
 
+// 打开详情页时，若上次保存为"已导入通用配置"，自动把最新通用配置合并到预览中。
+// 不设置 _preImportSnapshot：用户取消勾选时走 stripOverlayFields 路径，按当前
+// 通用配置键精确删除，与用户"勾选时通用赢、取消时通用键直接删除"的语义一致。
+async function applyImportOnOpenIfNeeded() {
+  if (!currentEditingModel || !currentEditingModel._importCommonEnabled) return;
+  const editor = document.getElementById('detail-config-editor');
+  if (!editor) return;
+
+  const importToggle = document.getElementById('detail-import-common-toggle');
+  if (importToggle) importToggle.checked = true;
+
+  let baseJson;
+  try {
+    baseJson = JSON.parse(editor.value || '{}');
+  } catch (err) {
+    return;
+  }
+
+  let commonJson;
+  try {
+    const commonText = await invoke('get_common_config');
+    commonJson = JSON.parse(commonText || '{}');
+  } catch (err) {
+    showToast('读取通用配置失败: ' + err);
+    return;
+  }
+
+  currentEditingModel._preImportSnapshot = null;
+  const merged = deepMergeCommonPriority(baseJson, commonJson);
+  setConfigEditorText(JSON.stringify(merged, null, 2));
+  handleConfigTextChange();
+  markUnsynced();
+}
+
 async function handleEditCommonClick() {
   returnToDetailAfterCommonEdit = true;
   await openCommonConfigPage();
@@ -1487,6 +1757,7 @@ function renderCommonConfigPage() {
         <div class="config-header-row">
           <label class="form-label">通用 JSON 配置</label>
           <div class="config-header-actions">
+            <button type="button" class="config-header-link" id="extract-from-settings-btn">从 settings.json 提取</button>
             <button type="button" class="config-header-link" id="extract-from-current-btn">从当前配置提取</button>
             <label class="config-wrap-toggle"><input type="checkbox" id="common-config-wrap-toggle"> 自动换行</label>
           </div>
@@ -1547,6 +1818,9 @@ function bindCommonConfigEvents() {
   }
   if (saveBtn) saveBtn.addEventListener('click', handleSaveCommonConfig);
   if (extractBtn) extractBtn.addEventListener('click', handleExtractFromCurrent);
+
+  const extractFromSettingsBtn = document.getElementById('extract-from-settings-btn');
+  if (extractFromSettingsBtn) extractFromSettingsBtn.addEventListener('click', handleExtractFromSettings);
 }
 
 async function handleSaveCommonConfig() {
@@ -1558,9 +1832,15 @@ async function handleSaveCommonConfig() {
     return;
   }
   try {
-    await invoke('save_common_config', { content: text });
+    // 后端会把所有勾选了"导入通用配置"的模型按新通用配置重写，并返回影响数。
+    const affected = await invoke('save_common_config', { content: text });
     currentCommonConfigText = text;
-    showToast('通用配置已保存');
+    const count = Number.isFinite(affected) ? affected : 0;
+    showToast(count > 0 ? `通用配置已保存，已同步 ${count} 个模型` : '通用配置已保存');
+    // 级联可能改了多个模型 JSON，列表页拿到的 raw_json 已过期，强制重新拉取
+    await loadModels();
+    // 与"保存配置"按钮行为对齐：保存后自动返回上一级（详情页或主页）
+    handleCommonConfigBack();
   } catch (err) {
     showToast('保存失败: ' + err);
   }
@@ -1597,6 +1877,40 @@ async function handleExtractFromCurrent() {
   setCommonConfigEditorText(mergedText);
   validateCommonConfigJson(mergedText);
   showToast('已合并候选字段到编辑器（未保存）');
+}
+
+// 从 ~/.claude/settings.json 提取候选通用配置，并以"已有键不覆盖"的方式
+// 合并到当前编辑器内容；保存仍需用户点击保存按钮，与"从当前配置提取"语义一致。
+async function handleExtractFromSettings() {
+  let candidate;
+  try {
+    const candidateText = await invoke('extract_common_config_from_settings');
+    candidate = JSON.parse(candidateText || '{}');
+  } catch (err) {
+    showToast('提取失败: ' + err);
+    return;
+  }
+
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || Object.keys(candidate).length === 0) {
+    showToast('未发现可复用通用配置');
+    return;
+  }
+
+  const commonEditor = document.getElementById('common-config-editor');
+  if (!commonEditor) return;
+  let existingJson;
+  try {
+    existingJson = JSON.parse(commonEditor.value || '{}');
+  } catch (e) {
+    showToast('当前通用配置 JSON 格式错误，请先修正');
+    return;
+  }
+
+  const merged = deepMergeKeepExisting(existingJson, candidate);
+  const mergedText = JSON.stringify(merged, null, 2);
+  setCommonConfigEditorText(mergedText);
+  validateCommonConfigJson(mergedText);
+  showToast('已从 settings.json 合并候选字段（未保存）');
 }
 
 async function handleCommonConfigBack() {

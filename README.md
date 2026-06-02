@@ -24,7 +24,7 @@ CC Start 是一个面向 Claude Code 的多模型启动器，用来统一管理�
 
 桌面端安装包已附带 `cc` / `ccs` 命令行启动器，装一个安装包即可同时拥有 GUI 和命令行。
 
-1. 打开 [GitHub Releases](https://github.com/1908490231/cc_start/releases)
+1. 打开 [GitHub Releases](https://github.com/fan-sun/cc_start/releases)
 2. 下载最新版本中的 `CC-Start_*_x64-setup.exe`
 3. 双击安装包并按提示完成安装
 4. 打开 CC Start 桌面端，添加模型配置后即可启动 Claude Code
@@ -38,7 +38,7 @@ CC Start 是一个面向 Claude Code 的多模型启动器，用来统一管理�
 如果只想安装命令行版，不需要桌面 GUI，可以使用仓库根目录的安装脚本。
 
 ```bash
-git clone https://github.com/1908490231/cc_start.git && cd cc_start
+git clone https://github.com/fan-sun/cc_start.git && cd cc_start
 
 # Windows → 双击运行
 install.bat
@@ -280,6 +280,34 @@ claude --settings ~/.claude/models/qwen.json
 
 ## 更新日志
 
+### 2026-05-30 · v1.1.0 · 新增 + 修复
+
+#### 桌面端：配置备份与通用配置增强
+
+- 新增"通用配置"机制：从全局 `~/.claude/settings.json` 自动提取 MCP / hooks / permissions 等非 API 字段作为通用配置
+- 每个模型可独立选择是否导入通用配置，状态持久记忆，无需每次启动重设
+- 新增固定频率自动备份模型配置文件，避免误改后无法恢复
+- 新增备份列表查看页，可查看历史备份时间、大小、来源
+- 新增镜像式手动恢复：选中任意备份一键还原，覆盖当前配置
+- 新增"保留份数"设置：超过设定数量后自动清理最旧备份
+- 修复通用配置保存后两个相关 bug
+
+#### CLI：模式选择菜单 PowerShell / cmd 兼容性
+
+- 修复 PowerShell 5.1 / 7.x / cmd 下 `cc → 数字选模型 → 启动模式菜单` 路径，按 ↑↓ 时菜单不断向下追加复制的 bug
+- 根因：原 PowerShell 分支用 `\033[s` / `\033[u` 保存绝对光标位置，上层模型列表已把屏幕推到底部，首次打印 options 触发滚动后绝对坐标失效，下一次恢复落到菜单下方
+- 修复：PowerShell / cmd 分支改用 `\033[nA`（相对上移），与 mintty 分支保持一致，免疫终端滚动
+- Git Bash mintty 路径无回归
+
+#### 其他
+
+- 仓库由 `1908490231/cc_start` 改名为 [`fan-sun/cc_start`](https://github.com/fan-sun/cc_start)，旧 URL 通过 GitHub 自动重定向继续有效
+
+#### 升级方法
+
+- 桌面版用户：到 [Releases](https://github.com/fan-sun/cc_start/releases) 重新下载最新安装包覆盖安装
+- CLI 用户：重新跑 `install.bat`，或在 Git Bash 用 `cp cli/cc ~/.local/bin/cc` 直接覆盖
+
 ### 2026-05-21 · 修复
 
 - 发布 CC Start 桌面端 Windows 安装包
@@ -295,7 +323,7 @@ claude --settings ~/.claude/models/qwen.json
 ### 2026-05-19 · Fork
 
 - 基于上游 [wandanan/cc_start](https://github.com/wandanan/cc_start) v1.0.0 fork
-- 仓库地址迁移至 [1908490231/cc_start](https://github.com/1908490231/cc_start)
+- 仓库地址迁移至 [fan-sun/cc_start](https://github.com/fan-sun/cc_start)
 
 ### 2026-04-28 · v1.0.0
 
@@ -323,7 +351,7 @@ CC Start 也提供图形界面版本，适合不想记命令、希望可视化�
 ### 下载安装
 
 1. 先安装 Claude Code
-2. 到 [CC Start Desktop Releases](https://github.com/1908490231/cc_start/releases) 页面下载安装包
+2. 到 [CC Start Desktop Releases](https://github.com/fan-sun/cc_start/releases) 页面下载安装包
 3. Windows 用户下载 **Setup.exe**（NSIS 安装包，已附带 `cc` / `ccs` 命令行启动器）
 4. 安装完成后打开桌面版，即可查看、添加、编辑并启动模型配置
 
@@ -429,7 +457,7 @@ UnexpectedToken session-start
 **解决**：升级到 2026-05-21 之后版本。新版 cc.cmd / ccs.cmd 4 层 fallback 已改为优先 MSYS `usr\bin\bash.exe`。
 
 - **CLI 单装**：在仓库根目录重新跑 `install.bat`
-- **桌面版用户**：到 [Releases](https://github.com/1908490231/cc_start/releases) 下载最新版安装包，安装时勾选"安装命令行启动器（cc 命令）"
+- **桌面版用户**：到 [Releases](https://github.com/fan-sun/cc_start/releases) 下载最新版安装包，安装时勾选"安装命令行启动器（cc 命令）"
 
 升级后旧 cc.cmd / ccs.cmd 会被覆盖，下次启动 Claude Code 不会再报这个错。
 
@@ -438,7 +466,7 @@ UnexpectedToken session-start
 
 如果这个项目对你有帮助，请给个 ⭐ Star！
 
-[![Star History Chart](https://api.star-history.com/svg?repos=1908490231/cc_start&type=Date)](https://star-history.com/#1908490231/cc_start&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=fan-sun/cc_start&type=Date)](https://star-history.com/#fan-sun/cc_start&Date)
 
 ## License
 
@@ -450,4 +478,4 @@ MIT
   <b>如果这个项目对你有帮助，点个 ⭐ Star 就是最大的鼓励！</b>
 </p>
 
-[![Star History Chart](https://api.star-history.com/svg?repos=1908490231/cc_start&type=Date)](https://star-history.com/#1908490231/cc_start&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=fan-sun/cc_start&type=Date)](https://star-history.com/#fan-sun/cc_start&Date)

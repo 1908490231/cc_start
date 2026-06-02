@@ -968,6 +968,109 @@ body.row-dragging * {
   flex-wrap: wrap;
 }
 
+.settings-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #4d443d;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.settings-form-row > span {
+  min-width: 80px;
+}
+
+.settings-form-row select {
+  padding: 6px 10px;
+  border: 1px solid #d8c9bc;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  color: #2c2c2c;
+  cursor: pointer;
+}
+
+.settings-form-row-actions {
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.backup-list {
+  margin-top: 12px;
+  border: 1px solid #e8ddd4;
+  border-radius: 8px;
+  background: #fff;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.backup-list-loading,
+.backup-list-empty {
+  padding: 16px;
+  color: #8a7e72;
+  font-size: 13px;
+  text-align: center;
+}
+
+.backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #f0e8de;
+}
+
+.backup-row:last-child {
+  border-bottom: none;
+}
+
+.backup-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.backup-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.backup-row-name {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  color: #2c2c2c;
+  word-break: break-all;
+}
+
+.backup-row-meta {
+  font-size: 12px;
+  color: #8a7e72;
+}
+
+.backup-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.backup-tag.tag-regular {
+  background: rgba(230, 126, 34, 0.12);
+  color: #c0570f;
+}
+
+.backup-tag.tag-pre-restore {
+  background: rgba(52, 152, 219, 0.12);
+  color: #2074a8;
+}
+
+.btn-restore {
+  white-space: nowrap;
+}
+
 .btn-danger {
   padding: 8px 16px;
   background: rgba(192, 57, 43, 0.08);
