@@ -462,9 +462,9 @@ UnexpectedToken session-start
 升级后旧 cc.cmd / ccs.cmd 会被覆盖，下次启动 Claude Code 不会再报这个错。
 
 
-## Star History
-
-如果这个项目对你有帮助，请给个 ⭐ Star！
+<p align="center">
+  <b>如果这个项目对你有帮助，点个 ⭐ Star 就是最大的鼓励！</b>
+</p>
 
 [![Star History Chart](https://api.star-history.com/svg?repos=fan-sun/cc_start&type=Date)](https://star-history.com/#fan-sun/cc_start&Date)
 
@@ -473,9 +473,3 @@ UnexpectedToken session-start
 MIT
 
 ---
-
-<p align="center">
-  <b>如果这个项目对你有帮助，点个 ⭐ Star 就是最大的鼓励！</b>
-</p>
-
-[![Star History Chart](https://api.star-history.com/svg?repos=fan-sun/cc_start&type=Date)](https://star-history.com/#fan-sun/cc_start&Date)
